@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.local
+
+# Test files (may contain API keys)
+test-*.ts
+test-*.js
+scripts/validate-*.ts
+scripts/validate-*.js
+
+# SQLite temporary files
+*.db-shm
+*.db-wal
+*.db-journal
+

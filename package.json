@@ -1,0 +1,48 @@
+{
+  "name": "nzdpu-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for querying NZDPU GHG emissions data with benchmarking and educational capabilities",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "nzdpu-mcp-server": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "data/nzdpu.db"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc -w",
+    "clean": "rm -rf dist",
+    "prepare": "npm run build",
+    "build-db": "NODE_TLS_REJECT_UNAUTHORIZED=0 node dist/scripts/build-database.js"
+  },
+  "keywords": [
+    "mcp",
+    "nzdpu",
+    "ghg",
+    "emissions",
+    "climate",
+    "carbon",
+    "benchmarking"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "axios": "^1.6.0",
+    "better-sqlite3": "^11.6.0",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
+
