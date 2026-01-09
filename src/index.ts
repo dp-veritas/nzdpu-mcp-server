@@ -371,11 +371,50 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         output += '\n\n';
         
         if (result.data.length === 0) {
-          output += '*No companies match the search criteria.*\n';
-          output += '\nTry:\n';
-          output += '- Using partial name matches\n';
-          output += '- Checking jurisdiction spelling (use nzdpu_list type=jurisdictions)\n';
-          output += '- Using broader sector filters\n';
+          output += '*No companies found matching:*\n';
+          
+          // Show what filters were used
+          if (searchName) output += `- Name: "${searchName}"\n`;
+          if (jurisdiction) output += `- Jurisdiction: "${jurisdiction}"\n`;
+          if (sector) output += `- Sector: "${sector}"\n`;
+          if (subSector) output += `- Sub-Sector: "${subSector}"\n`;
+          if (industry) output += `- Industry: "${industry}"\n`;
+          
+          output += '\n';
+          
+          // If sub_sector was specified, show jurisdictions that have it
+          if (subSector) {
+            const alternatives = db.getJurisdictionsWithSubSector(subSector, 5);
+            if (alternatives.length > 0) {
+              output += `**Jurisdictions with "${subSector}" companies:**\n`;
+              alternatives.forEach(a => output += `- ${a.jurisdiction} (${a.count})\n`);
+            } else {
+              output += `*No companies found in "${subSector}" sub-sector in any jurisdiction.*\n`;
+            }
+            output += '\n';
+          }
+          
+          // If jurisdiction was specified but no sub_sector, show what sub-sectors exist there
+          if (jurisdiction && !subSector) {
+            const available = db.getSubSectorsInJurisdiction(jurisdiction);
+            if (available.length > 0) {
+              output += `**Sub-sectors available in ${jurisdiction}:**\n`;
+              available.slice(0, 8).forEach(s => output += `- ${s.sub_sector} (${s.count})\n`);
+              if (available.length > 8) {
+                output += `- ... and ${available.length - 8} more\n`;
+              }
+            } else {
+              output += `*No companies found in "${jurisdiction}".*\n`;
+            }
+            output += '\n';
+          }
+          
+          output += '**Suggestions:**\n';
+          if (subSector) {
+            output += '- Try a different jurisdiction from the list above\n';
+          }
+          output += '- Use `nzdpu_list type=jurisdictions` to see all available jurisdictions\n';
+          output += '- Use `nzdpu_list type=subsectors` to see all sectors and sub-sectors\n';
         } else {
           output += `| Company | nz_id | Jurisdiction | Sector | Sub-Sector |\n`;
           output += `|---------|-------|--------------|--------|------------|\n`;

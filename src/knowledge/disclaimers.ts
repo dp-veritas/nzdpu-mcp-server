@@ -97,3 +97,22 @@ export const ERROR_MESSAGES = {
     `Invalid scope "${scope}". Use: scope1, scope2_lb, scope2_mb, or scope3.`,
   scope2MethodologyMismatch: `Cannot compare Scope 2 emissions: One uses location-based methodology while the other uses market-based.`,
 };
+
+/**
+ * Guidance for empty/no-data scenarios
+ * Helps agents understand why a query returned no results
+ */
+export const NO_DATA_GUIDANCE = {
+  search: 'No companies match the search criteria.',
+  searchWithFilters: (filters: string[]) =>
+    `No companies found matching: ${filters.join(', ')}`,
+  emissions: (nzId: number) =>
+    `No emissions data found for company ${nzId}. The company may exist but has not disclosed emissions.`,
+  benchmark: 'Insufficient data for benchmark comparison. Try broader filters or different companies.',
+  noJurisdiction: (jurisdiction: string) =>
+    `No companies found in "${jurisdiction}". Use \`nzdpu_list type=jurisdictions\` to see available jurisdictions.`,
+  noSubSector: (subSector: string) =>
+    `No companies found in "${subSector}" sub-sector. Use \`nzdpu_list type=subsectors\` to see available sub-sectors.`,
+  noSubSectorInJurisdiction: (subSector: string, jurisdiction: string) =>
+    `No "${subSector}" companies found in "${jurisdiction}". This combination may not exist in the database.`,
+};

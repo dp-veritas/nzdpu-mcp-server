@@ -422,6 +422,48 @@ export function listSubSectors(sectorFilter?: string): { sector: string; sub_sec
 }
 
 /**
+ * Get jurisdictions that have companies in a specific sub-sector
+ * Used when search returns 0 to suggest alternatives
+ */
+export function getJurisdictionsWithSubSector(
+  subSector: string,
+  limit: number = 10
+): { jurisdiction: string; count: number }[] {
+  const db = getDatabase();
+  
+  return db.prepare(`
+    SELECT 
+      jurisdiction,
+      COUNT(*) as count
+    FROM companies
+    WHERE sics_sub_sector = ? AND jurisdiction IS NOT NULL
+    GROUP BY jurisdiction
+    ORDER BY count DESC
+    LIMIT ?
+  `).all(subSector, limit) as { jurisdiction: string; count: number }[];
+}
+
+/**
+ * Get sub-sectors available in a specific jurisdiction
+ * Used when search returns 0 to show what's available
+ */
+export function getSubSectorsInJurisdiction(
+  jurisdiction: string
+): { sub_sector: string; count: number }[] {
+  const db = getDatabase();
+  
+  return db.prepare(`
+    SELECT 
+      sics_sub_sector as sub_sector,
+      COUNT(*) as count
+    FROM companies
+    WHERE jurisdiction = ? AND sics_sub_sector IS NOT NULL
+    GROUP BY sics_sub_sector
+    ORDER BY count DESC
+  `).all(jurisdiction) as { sub_sector: string; count: number }[];
+}
+
+/**
  * Get peer statistics for benchmarking
  */
 export function getPeerStatistics(

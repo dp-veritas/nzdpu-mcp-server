@@ -585,6 +585,50 @@ async function testEdgeCases() {
   results.passed += 1;
 }
 
+async function testEmptyResultsGuidance() {
+  console.log('\n📭 Empty Results Guidance Tests...');
+  
+  // Test 1: Empty search shows filters used
+  let res = await callTool('nzdpu_search', { 
+    jurisdiction: 'Germany', 
+    sub_sector: 'Oil & Gas' 
+  });
+  assertContains(res.text, 'No companies found', 'Should indicate no results');
+  assertContains(res.text, 'Germany', 'Should show jurisdiction filter');
+  assertContains(res.text, 'Oil & Gas', 'Should show sub_sector filter');
+  console.log('  ✓ Empty search shows filters used');
+  results.passed += 1;
+  
+  // Test 2: Shows alternative jurisdictions for sub_sector
+  assertContains(res.text, 'Jurisdictions with', 'Should suggest alternatives');
+  console.log('  ✓ Shows alternative jurisdictions with that sub-sector');
+  results.passed += 1;
+  
+  // Test 3: Shows suggestions section
+  assertContains(res.text, 'Suggestions', 'Should have suggestions');
+  assertContains(res.text, 'nzdpu_list', 'Should suggest list tool');
+  console.log('  ✓ Shows helpful suggestions');
+  results.passed += 1;
+  
+  // Test 4: Jurisdiction-only empty search shows available sub-sectors
+  res = await callTool('nzdpu_search', { jurisdiction: 'Monaco' });
+  if (res.text.includes('No companies found')) {
+    // Monaco might not have companies, which is expected
+    assertContains(res.text, 'Suggestions', 'Should have suggestions for empty jurisdiction');
+    console.log('  ✓ Handles jurisdiction with no companies');
+    results.passed += 1;
+  } else {
+    console.log('  ⚠ Monaco has companies - skipping empty jurisdiction test');
+  }
+  
+  // Test 5: Name search empty results
+  res = await callTool('nzdpu_search', { name: 'ZZZZNONEXISTENT99999' });
+  assertContains(res.text, 'No companies found', 'Should indicate no results');
+  assertContains(res.text, 'Name:', 'Should show name filter');
+  console.log('  ✓ Name search empty results show filter used');
+  results.passed += 1;
+}
+
 // ==================== MAIN ====================
 
 async function main() {
@@ -607,6 +651,7 @@ async function main() {
     await testLearnTool();
     await testAdvancedKnowledge();
     await testEdgeCases();
+    await testEmptyResultsGuidance();
     await testPerformance();
     
   } catch (error) {
