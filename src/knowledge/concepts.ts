@@ -298,6 +298,106 @@ function formatConceptExplanation(concept: GHGConcept): string {
 export function listAvailableConcepts(): string[] {
   const concepts = Object.keys(ghgConcepts);
   const categories = Object.keys(scope3Categories).map(k => `scope3_category_${k}`);
-  return [...concepts, ...categories];
+
+  // Advanced topics from advanced.ts
+  const advancedTopics = [
+    'double_counting',
+    'frameworks',
+    'emission_factors',
+    'base_year',
+    'advanced'
+  ];
+
+  return [...concepts, ...categories, ...advancedTopics];
+}
+
+// ==================== RELATED CONCEPT EXPANSION ====================
+
+/**
+ * Explain a concept with brief summaries of related concepts
+ * Enables Claude to traverse knowledge graph in a single query
+ */
+export function explainConceptWithRelated(conceptKey: string, maxRelated: number = 3): string {
+  const concept = ghgConcepts[conceptKey];
+  if (!concept) {
+    // Check if it's a Scope 3 category
+    const categoryMatch = conceptKey.match(/scope3_category_?(\d+)/i);
+    if (categoryMatch) {
+      const categoryNum = parseInt(categoryMatch[1]);
+      const category = scope3Categories[categoryNum];
+      if (category) {
+        return formatConceptWithRelated(category, maxRelated);
+      }
+    }
+    return `Concept "${conceptKey}" not found. Available concepts: ${Object.keys(ghgConcepts).join(', ')}`;
+  }
+  return formatConceptWithRelated(concept, maxRelated);
+}
+
+function formatConceptWithRelated(concept: GHGConcept, maxRelated: number): string {
+  let output = formatConceptExplanation(concept);
+
+  if (concept.relatedConcepts && concept.relatedConcepts.length > 0) {
+    output += '\n---\n\n### Related Concepts\n\n';
+
+    const relatedToShow = concept.relatedConcepts.slice(0, maxRelated);
+    for (const relatedKey of relatedToShow) {
+      const relatedConcept = ghgConcepts[relatedKey];
+      if (relatedConcept) {
+        // Truncate definition to ~100 chars
+        const briefDef = relatedConcept.definition.length > 100
+          ? relatedConcept.definition.slice(0, 100) + '...'
+          : relatedConcept.definition;
+        output += `**${relatedConcept.name}**: ${briefDef}\n\n`;
+      }
+    }
+
+    if (concept.relatedConcepts.length > maxRelated) {
+      const remaining = concept.relatedConcepts.slice(maxRelated).join(', ');
+      output += `*Also related: ${remaining}*\n`;
+    }
+  }
+
+  return output;
+}
+
+/**
+ * Get a brief summary of a concept (1-2 sentences)
+ */
+export function getConceptSummary(conceptKey: string): string {
+  const concept = ghgConcepts[conceptKey];
+  if (!concept) {
+    // Check Scope 3 categories
+    const categoryMatch = conceptKey.match(/scope3_category_?(\d+)/i);
+    if (categoryMatch) {
+      const categoryNum = parseInt(categoryMatch[1]);
+      const category = scope3Categories[categoryNum];
+      if (category) {
+        return `${category.name}: ${category.definition.slice(0, 150)}...`;
+      }
+    }
+    return `Concept "${conceptKey}" not found.`;
+  }
+
+  // Return name + truncated definition
+  const briefDef = concept.definition.length > 150
+    ? concept.definition.slice(0, 150) + '...'
+    : concept.definition;
+  return `${concept.name}: ${briefDef}`;
+}
+
+/**
+ * Get all concepts that reference a given concept
+ */
+export function getConceptsReferencingThis(conceptKey: string): string[] {
+  const referencing: string[] = [];
+
+  for (const [key, concept] of Object.entries(ghgConcepts)) {
+    if (concept.relatedConcepts?.includes(conceptKey)) {
+      referencing.push(key);
+    }
+  }
+
+  return referencing;
 }
 

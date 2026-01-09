@@ -12,15 +12,46 @@ import {
 import * as db from './db/queries.js';
 
 // Knowledge base (no database needed)
-import { 
-  explainConcept, 
-  listAvailableConcepts, 
+import {
+  explainConcept,
+  listAvailableConcepts,
   ghgConcepts,
-  scope3Categories 
+  scope3Categories,
+  explainConceptWithRelated,
+  getConceptSummary
 } from './knowledge/concepts.js';
-import { 
-  commonMistakes 
+import {
+  commonMistakes
 } from './knowledge/comparability.js';
+import {
+  explainDoubleCounting,
+  getFrameworkInfo,
+  listFrameworks,
+  getEmissionFactorGuidance,
+  explainEmissionFactorHierarchy,
+  explainBaseYearRecalculation,
+  listAdvancedTopics,
+  reportingFrameworks,
+  emissionFactorHierarchy,
+  majorEmissionFactorDatabases,
+  getFrameworksSummary,
+  FRAMEWORKS_BY_JURISDICTION,
+  FRAMEWORKS_BY_TYPE
+} from './knowledge/advanced.js';
+import {
+  getSectorsWithMaterialCategory,
+  getCategorySectorCoverage,
+  SCOPE3_CATEGORY_NAMES as MATERIALITY_CATEGORY_NAMES
+} from './knowledge/materiality.js';
+import {
+  BENCHMARK_DISCLAIMER,
+  RANKING_DISCLAIMER,
+  SCOPE3_DATA_QUALITY_DISCLAIMER
+} from './knowledge/disclaimers.js';
+import {
+  SCOPE2_COMPARISON_EXPLANATION,
+  SCOPE2_COMPARISON_SUMMARY
+} from './knowledge/explanations.js';
 
 // ============================================================
 // 7 CONSOLIDATED TOOLS
@@ -233,6 +264,7 @@ WHEN TO USE:
 • Scope 3 categories: "Explain all 15 Scope 3 categories"
 • Avoiding mistakes: "Common errors in emissions analysis"
 • Comparability rules: "Why can't I compare these values?"
+• Advanced topics: Reporting frameworks, emission factors, base years
 
 TOPIC OPTIONS:
 • "concepts" - List all available concept explanations
@@ -242,13 +274,27 @@ TOPIC OPTIONS:
 • "scope3:<number>" - Specific category (e.g., "scope3:11" for Use of Sold Products)
 • "mistakes" - Common errors in GHG data analysis
 • "comparability:<type>" - Why certain data can't be compared
-  Types: scope2_lb_vs_mb, different_boundaries, different_years, scope3_categories`,
+  Types: scope2_lb_vs_mb, different_boundaries, different_years, scope3_categories
+
+ADVANCED TOPICS:
+• "double_counting" - How to avoid counting emissions twice (S2 LB/MB, S3 overlaps)
+• "double_counting:<context>" - Specific context: scope2, scope3, value_chain, totals
+• "frameworks" - List all reporting frameworks (ISSB, ESRS, CDP, etc.)
+• "framework:<name>" - Details on specific framework (e.g., "framework:IFRS S2", "framework:CDP")
+• "emission_factors" - Quality hierarchy and major databases
+• "emission_factor:<tier|db>" - Specific tier (1-4) or database (DEFRA, EPA, ecoinvent, IPCC)
+• "base_year" - Base year selection and recalculation policies
+• "materiality:<category>" - Which sectors find a Scope 3 category material (e.g., "materiality:15")`,
     inputSchema: {
       type: 'object',
       properties: {
-        topic: { 
-          type: 'string', 
+        topic: {
+          type: 'string',
           description: 'Topic to learn about (see description for options)'
+        },
+        summary: {
+          type: 'boolean',
+          description: 'Return brief summary (1-2 sentences) instead of full explanation. Good for quick reference.'
         },
       },
       required: ['topic'],
@@ -565,14 +611,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             
             // Add gating disclaimer for rankings
             output += '\n---\n';
-            output += '## ⚠️ Ranking Limitations\n\n';
-            output += 'These rankings show **absolute reported emissions** and do not indicate actual environmental performance:\n\n';
-            output += '- **Scope 3 coverage varies** - Companies reporting more categories appear higher\n';
-            output += '- **Business models differ** - Producers vs services have different profiles\n';
-            output += '- **Company size ignored** - Larger companies naturally emit more\n';
-            output += '- **Methodology varies** - Different calculation approaches affect totals\n\n';
-            output += '📊 Use `nzdpu_emissions` and `nzdpu_quality` to understand each company\'s data before drawing conclusions.\n';
-            
+            output += RANKING_DISCLAIMER;
+            output += '\n\n📊 Use `nzdpu_emissions` and `nzdpu_quality` to understand each company\'s data before drawing conclusions.\n';
+
             return { content: [{ type: 'text', text: output }] };
           }
           
@@ -698,16 +739,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             
             // Add gating disclaimer for benchmarks
             output += '\n---\n';
-            output += '## ⚠️ Benchmark Limitations\n\n';
-            output += 'Percentile rankings are based on **absolute emissions** and may not reflect actual performance:\n\n';
-            output += '- **Business models vary** within sectors (e.g., services vs production)\n';
-            output += '- **Scope 3 coverage differs** - companies report different categories\n';
-            output += '- **No size adjustment** - larger companies naturally emit more\n';
-            output += '- **Methodology differences** may affect comparability\n\n';
-            output += '📊 **For deeper analysis:**\n';
+            output += BENCHMARK_DISCLAIMER;
+            output += '\n\n📊 **For deeper analysis:**\n';
             output += `- Use \`nzdpu_emissions company_id=${companyId}\` to see Scope 3 category coverage\n`;
             output += `- Use \`nzdpu_quality company_id=${companyId}\` to assess data quality\n`;
-            
+
             return { content: [{ type: 'text', text: output }] };
           }
           
@@ -750,12 +786,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             output += `**Reporting Year(s):** ${yearsStr}\n\n`;
             
             // Gating disclaimer at the top
-            output += `## ⚠️ Comparison Limitations\n\n`;
-            output += `The emissions data below represents **reported figures only**. Direct ranking is not recommended because:\n\n`;
-            output += `1. **Scope 3 coverage varies** - Companies report different categories\n`;
-            output += `2. **Business models differ** - Not distinguishable in this dataset\n`;
-            output += `3. **No intensity metrics** - Revenue/production data not available\n`;
-            output += `4. **Methodologies vary** - See quality assessment for each company\n\n`;
+            output += BENCHMARK_DISCLAIMER;
+            output += '\n\n';
             
             // Main emissions table with Scope 3 coverage indicator
             output += `## Emissions Summary (tCO₂e)\n\n`;
@@ -978,6 +1010,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // ============ 7. LEARN ============
       case 'nzdpu_learn': {
         const topic = args?.topic as string;
+        const useSummary = args?.summary as boolean | undefined;
         if (!topic) throw new Error('topic is required');
 
         // Handle different topic formats
@@ -993,10 +1026,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           output += 'Use `nzdpu_learn topic=scope3` to see all categories, or `topic=scope3:<number>` for specific category.\n';
           return { content: [{ type: 'text', text: output }] };
         }
-        
+
         if (topic.startsWith('concept:')) {
           const conceptName = topic.substring(8);
-          const explanation = explainConcept(conceptName);
+          // Use summary or full explanation with related concepts
+          const explanation = useSummary
+            ? getConceptSummary(conceptName)
+            : explainConceptWithRelated(conceptName);
           return { content: [{ type: 'text', text: explanation }] };
         }
         
@@ -1190,6 +1226,132 @@ Each category has multiple calculation approaches with varying accuracy.
             return { content: [{ type: 'text', text: `Unknown comparability type: ${compType}. Options: scope2_lb_vs_mb, different_boundaries, different_years, scope3_categories` }] };
           }
           return { content: [{ type: 'text', text: explanation }] };
+        }
+        
+        // ============ ADVANCED TOPICS ============
+        
+        // Double counting
+        if (topic === 'double_counting') {
+          let output = '# Double Counting Prevention\n\n';
+          output += explainDoubleCounting('scope2');
+          output += '\n---\n\n';
+          output += explainDoubleCounting('scope3');
+          output += '\n---\n\n';
+          output += explainDoubleCounting('value_chain');
+          output += '\n---\n\n';
+          output += explainDoubleCounting('totals');
+          return { content: [{ type: 'text', text: output }] };
+        }
+        
+        if (topic.startsWith('double_counting:')) {
+          const context = topic.substring(16) as 'scope2' | 'scope3' | 'value_chain' | 'totals';
+          const output = explainDoubleCounting(context);
+          return { content: [{ type: 'text', text: output }] };
+        }
+        
+        // Reporting frameworks
+        if (topic === 'frameworks') {
+          // Summary mode: just a one-liner
+          if (useSummary) {
+            const summary = getFrameworksSummary();
+            return { content: [{ type: 'text', text: summary }] };
+          }
+
+          const frameworks = listFrameworks();
+          let output = '# Reporting Frameworks\n\n';
+          output += '## Mandatory\n\n';
+          output += '| Framework | Jurisdiction | GHG Scope |\n';
+          output += '|-----------|--------------|----------|\n';
+          for (const f of frameworks.filter(f => f.type === 'mandatory')) {
+            output += `| ${f.name} | ${f.jurisdiction} | See details |\n`;
+          }
+          output += '\n## Voluntary\n\n';
+          output += '| Framework | Jurisdiction |\n';
+          output += '|-----------|--------------|\n';
+          for (const f of frameworks.filter(f => f.type === 'voluntary')) {
+            output += `| ${f.name} | ${f.jurisdiction} |\n`;
+          }
+          output += '\n## Sector-Specific\n\n';
+          output += '| Framework | Jurisdiction |\n';
+          output += '|-----------|--------------|\n';
+          for (const f of frameworks.filter(f => f.type === 'sector-specific')) {
+            output += `| ${f.name} | ${f.jurisdiction} |\n`;
+          }
+          output += '\nUse `nzdpu_learn topic=framework:<name>` for details on a specific framework.';
+          return { content: [{ type: 'text', text: output }] };
+        }
+        
+        if (topic.startsWith('framework:')) {
+          const frameworkName = topic.substring(10);
+          const output = getFrameworkInfo(frameworkName);
+          return { content: [{ type: 'text', text: output }] };
+        }
+        
+        // Emission factors
+        if (topic === 'emission_factors') {
+          const output = explainEmissionFactorHierarchy();
+          let dbOutput = '\n\n# Major Emission Factor Databases\n\n';
+          dbOutput += '| Database | Publisher | Jurisdiction | Update Frequency |\n';
+          dbOutput += '|----------|-----------|--------------|------------------|\n';
+          for (const [key, db] of Object.entries(majorEmissionFactorDatabases)) {
+            dbOutput += `| ${key} | ${db.publisher.substring(0, 30)}${db.publisher.length > 30 ? '...' : ''} | ${db.jurisdiction} | ${db.updateFrequency} |\n`;
+          }
+          dbOutput += '\nUse `nzdpu_learn topic=emission_factor:<name>` for details on a specific database or tier.';
+          return { content: [{ type: 'text', text: output + dbOutput }] };
+        }
+        
+        if (topic.startsWith('emission_factor:')) {
+          const tierOrDb = topic.substring(16);
+          const tierNum = parseInt(tierOrDb);
+          if (!isNaN(tierNum)) {
+            const output = getEmissionFactorGuidance(tierNum);
+            return { content: [{ type: 'text', text: output }] };
+          } else {
+            const output = getEmissionFactorGuidance(tierOrDb);
+            return { content: [{ type: 'text', text: output }] };
+          }
+        }
+        
+        // Base year and recalculation
+        if (topic === 'base_year' || topic === 'recalculation') {
+          const output = explainBaseYearRecalculation();
+          return { content: [{ type: 'text', text: output }] };
+        }
+
+        // Materiality by category
+        if (topic.startsWith('materiality:')) {
+          const catNum = parseInt(topic.substring(12));
+          if (isNaN(catNum) || catNum < 1 || catNum > 15) {
+            return { content: [{ type: 'text', text: `Invalid category: ${topic.substring(12)}. Valid: 1-15.` }] };
+          }
+
+          const sectors = getSectorsWithMaterialCategory(catNum);
+          const catName = MATERIALITY_CATEGORY_NAMES[catNum];
+
+          let output = `# Sectors Where Category ${catNum} is Material\n\n`;
+          output += `**Category ${catNum}:** ${catName}\n\n`;
+
+          if (sectors.length === 0) {
+            output += `No sectors have this category as explicitly material in our knowledge base.\n`;
+          } else {
+            output += `**${sectors.length} sectors** find this category material:\n\n`;
+            sectors.forEach(s => output += `• ${s}\n`);
+          }
+
+          output += `\n---\n`;
+          output += `Use \`nzdpu_learn topic=scope3:${catNum}\` for category definition.\n`;
+          output += `Use \`nzdpu_search sector=<name>\` to find companies in a sector.`;
+
+          return { content: [{ type: 'text', text: output }] };
+        }
+
+        // List all advanced topics
+        if (topic === 'advanced') {
+          const topics = listAdvancedTopics();
+          let output = '# Advanced Topics\n\n';
+          output += 'Use `nzdpu_learn topic=<topic>` with any of the following:\n\n';
+          topics.forEach(t => output += `• ${t}\n`);
+          return { content: [{ type: 'text', text: output }] };
         }
         
         // Try as a direct concept name

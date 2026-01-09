@@ -106,14 +106,25 @@ CREATE TABLE IF NOT EXISTS emissions (
 );
 
 -- Indexes for fast queries
+-- Company lookup indexes
 CREATE INDEX IF NOT EXISTS idx_companies_jurisdiction ON companies(jurisdiction);
 CREATE INDEX IF NOT EXISTS idx_companies_sector ON companies(sics_sector);
 CREATE INDEX IF NOT EXISTS idx_companies_sub_sector ON companies(sics_sub_sector);
 CREATE INDEX IF NOT EXISTS idx_companies_industry ON companies(sics_industry);
 CREATE INDEX IF NOT EXISTS idx_companies_name ON companies(company_name);
 
+-- OPTIMIZED: Composite indexes for peer group filtering (jurisdiction + sector)
+CREATE INDEX IF NOT EXISTS idx_companies_jurisdiction_sector ON companies(jurisdiction, sics_sector);
+CREATE INDEX IF NOT EXISTS idx_companies_sector_jurisdiction ON companies(sics_sector, jurisdiction);
+
+-- Emissions lookup indexes
 CREATE INDEX IF NOT EXISTS idx_emissions_nz_id ON emissions(nz_id);
 CREATE INDEX IF NOT EXISTS idx_emissions_year ON emissions(year);
+
+-- OPTIMIZED: Composite index for bulk queries (nz_id + year for latest emissions lookup)
+CREATE INDEX IF NOT EXISTS idx_emissions_nz_id_year ON emissions(nz_id, year DESC);
+
+-- Scope-specific indexes (kept for top emitter queries)
 CREATE INDEX IF NOT EXISTS idx_emissions_scope1 ON emissions(scope1);
 CREATE INDEX IF NOT EXISTS idx_emissions_scope2_lb ON emissions(scope2_lb);
 CREATE INDEX IF NOT EXISTS idx_emissions_scope2_mb ON emissions(scope2_mb);
@@ -152,7 +163,12 @@ let dbInstance: Database.Database | null = null;
 export function getDatabase(): Database.Database {
   if (!dbInstance) {
     dbInstance = new Database(DB_PATH, { readonly: true });
-    dbInstance.pragma('cache_size = 10000');
+
+    // OPTIMIZED: Pragmas for read-heavy workload
+    dbInstance.pragma('cache_size = 20000'); // 80 MB cache (was 40 MB)
+    dbInstance.pragma('temp_store = MEMORY'); // In-memory temp tables
+    dbInstance.pragma('mmap_size = 268435456'); // 256 MB memory-mapped I/O
+    dbInstance.pragma('query_only = ON'); // Enforce read-only mode
   }
   return dbInstance;
 }

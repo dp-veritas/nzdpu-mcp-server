@@ -367,19 +367,19 @@ export function getRecommendedMethods(sector: string, categoryNumber: number, su
  * Check if a methodology is appropriate for a category in a sector
  */
 export function isMethodologyAppropriate(
-  sector: string, 
-  categoryNumber: number, 
+  sector: string,
+  categoryNumber: number,
   methodology: string | null,
   subSector?: string
 ): 'appropriate' | 'acceptable' | 'limited' | 'unknown' {
   if (!methodology) return 'unknown';
-  
+
   const recommended = getRecommendedMethods(sector, categoryNumber, subSector);
-  
+
   if (recommended.includes(methodology)) {
     return 'appropriate';
   }
-  
+
   // PRIMARY tier methods are generally acceptable even if not specifically recommended
   const primaryMethods = [
     'Supplier-specific method',
@@ -392,12 +392,84 @@ export function isMethodologyAppropriate(
     'Franchise-specific method',
     'Investment-specific method',
   ];
-  
+
   if (primaryMethods.includes(methodology)) {
     return 'acceptable';
   }
-  
+
   // MODELED methods are limited but usable
   return 'limited';
+}
+
+// ==================== REVERSE INDEX ====================
+
+/**
+ * Pre-built reverse index: Category -> Sectors where it's material
+ * Enables O(1) lookup for "Which sectors have Category X as material?"
+ */
+export const SECTORS_BY_MATERIAL_CATEGORY: Record<number, string[]> = (() => {
+  const index: Record<number, string[]> = {};
+
+  // Initialize all 15 categories
+  for (let i = 1; i <= 15; i++) {
+    index[i] = [];
+  }
+
+  // Build reverse index from MATERIAL_CATEGORIES
+  for (const [sectorName, materiality] of Object.entries(MATERIAL_CATEGORIES)) {
+    for (const category of materiality.categories) {
+      if (!index[category].includes(sectorName)) {
+        index[category].push(sectorName);
+      }
+    }
+  }
+
+  return index;
+})();
+
+/**
+ * Get all sectors where a specific category is material
+ * O(1) lookup using pre-built index
+ */
+export function getSectorsWithMaterialCategory(category: number): string[] {
+  return SECTORS_BY_MATERIAL_CATEGORY[category] || [];
+}
+
+/**
+ * Get sectors ranked by how important a category is to them
+ * Returns sectors where the category appears earlier in their material list
+ */
+export function getSectorsRankedByCategory(category: number): Array<{ sector: string; rank: number }> {
+  const results: Array<{ sector: string; rank: number }> = [];
+
+  for (const [sectorName, materiality] of Object.entries(MATERIAL_CATEGORIES)) {
+    const rank = materiality.categories.indexOf(category);
+    if (rank !== -1) {
+      results.push({ sector: sectorName, rank: rank + 1 }); // 1-indexed rank
+    }
+  }
+
+  // Sort by rank (lower = more important)
+  return results.sort((a, b) => a.rank - b.rank);
+}
+
+/**
+ * Get a summary of all categories and their sector coverage
+ */
+export function getCategorySectorCoverage(): Array<{ category: number; name: string; sectorCount: number; sectors: string[] }> {
+  const coverage: Array<{ category: number; name: string; sectorCount: number; sectors: string[] }> = [];
+
+  for (let i = 1; i <= 15; i++) {
+    const sectors = SECTORS_BY_MATERIAL_CATEGORY[i];
+    coverage.push({
+      category: i,
+      name: SCOPE3_CATEGORY_NAMES[i],
+      sectorCount: sectors.length,
+      sectors
+    });
+  }
+
+  // Sort by sector count (descending)
+  return coverage.sort((a, b) => b.sectorCount - a.sectorCount);
 }
 

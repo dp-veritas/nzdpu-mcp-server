@@ -628,6 +628,7 @@ export function findDataQualityIssues(limit: number = 50): {
 
 /**
  * Compare multiple companies
+ * OPTIMIZED: Uses bulk queries instead of N+1 pattern
  */
 export function compareCompanies(
   nzIds: number[],
@@ -636,26 +637,50 @@ export function compareCompanies(
   company: CompanyRow;
   emissions: EmissionsRow | null;
 }[] {
+  if (nzIds.length === 0) return [];
+
   const db = getDatabase();
-  
-  const results: { company: CompanyRow; emissions: EmissionsRow | null }[] = [];
-  
-  for (const nzId of nzIds) {
-    const company = getCompanyById(nzId);
-    if (!company) continue;
-    
-    let emissions: EmissionsRow | null = null;
-    if (year) {
-      const e = db.prepare('SELECT * FROM emissions WHERE nz_id = ? AND year = ?').get(nzId, year) as EmissionsRow | undefined;
-      emissions = e || null;
-    } else {
-      const e = db.prepare('SELECT * FROM emissions WHERE nz_id = ? ORDER BY year DESC LIMIT 1').get(nzId) as EmissionsRow | undefined;
-      emissions = e || null;
-    }
-    
-    results.push({ company, emissions });
+  const placeholders = nzIds.map(() => '?').join(',');
+
+  // Bulk fetch all companies in one query
+  const companies = db.prepare(
+    `SELECT * FROM companies WHERE nz_id IN (${placeholders})`
+  ).all(...nzIds) as CompanyRow[];
+
+  // Bulk fetch all emissions in one query
+  let emissionsRows: EmissionsRow[];
+  if (year) {
+    emissionsRows = db.prepare(
+      `SELECT * FROM emissions WHERE nz_id IN (${placeholders}) AND year = ?`
+    ).all(...nzIds, year) as EmissionsRow[];
+  } else {
+    // Get latest year for each company using a subquery
+    emissionsRows = db.prepare(`
+      SELECT e.* FROM emissions e
+      INNER JOIN (
+        SELECT nz_id, MAX(year) as max_year
+        FROM emissions
+        WHERE nz_id IN (${placeholders})
+        GROUP BY nz_id
+      ) latest ON e.nz_id = latest.nz_id AND e.year = latest.max_year
+    `).all(...nzIds) as EmissionsRow[];
   }
-  
+
+  // Build emissions lookup map
+  const emissionsByNzId = new Map<number, EmissionsRow>();
+  for (const e of emissionsRows) {
+    emissionsByNzId.set(e.nz_id, e);
+  }
+
+  // Build results maintaining order
+  const results: { company: CompanyRow; emissions: EmissionsRow | null }[] = [];
+  for (const company of companies) {
+    results.push({
+      company,
+      emissions: emissionsByNzId.get(company.nz_id) || null
+    });
+  }
+
   return results;
 }
 
@@ -1183,6 +1208,7 @@ export function compareDataQuality(
 /**
  * Extended comparison with Scope 3 coverage analysis
  * Returns companies with emissions and detailed Scope 3 breakdown
+ * OPTIMIZED: Uses bulk queries instead of N+1 pattern
  */
 export function compareCompaniesWithScope3(
   nzIds: number[],
@@ -1196,41 +1222,67 @@ export function compareCompaniesWithScope3(
   scope3VarianceWarning: string | null;
   comparabilityWarnings: string[];
 } {
+  if (nzIds.length === 0) {
+    return { companies: [], scope3VarianceWarning: null, comparabilityWarnings: [] };
+  }
+
   const db = getDatabase();
+  const placeholders = nzIds.map(() => '?').join(',');
+
+  // Bulk fetch all companies in one query
+  const companiesData = db.prepare(
+    `SELECT * FROM companies WHERE nz_id IN (${placeholders})`
+  ).all(...nzIds) as CompanyRow[];
+
+  // Bulk fetch all emissions in one query
+  let emissionsRows: EmissionsRow[];
+  if (year) {
+    emissionsRows = db.prepare(
+      `SELECT * FROM emissions WHERE nz_id IN (${placeholders}) AND year = ?`
+    ).all(...nzIds, year) as EmissionsRow[];
+  } else {
+    // Get latest year for each company using a subquery
+    emissionsRows = db.prepare(`
+      SELECT e.* FROM emissions e
+      INNER JOIN (
+        SELECT nz_id, MAX(year) as max_year
+        FROM emissions
+        WHERE nz_id IN (${placeholders})
+        GROUP BY nz_id
+      ) latest ON e.nz_id = latest.nz_id AND e.year = latest.max_year
+    `).all(...nzIds) as EmissionsRow[];
+  }
+
+  // Build emissions lookup map
+  const emissionsByNzId = new Map<number, EmissionsRow>();
+  for (const e of emissionsRows) {
+    emissionsByNzId.set(e.nz_id, e);
+  }
+
+  // Build results with Scope 3 coverage
   const companies: {
     company: CompanyRow;
     emissions: EmissionsRow | null;
     scope3Coverage: Scope3CoverageSummary | null;
   }[] = [];
-  
+
   const comparabilityWarnings: string[] = [];
   const scope3Totals: number[] = [];
-  
-  for (const nzId of nzIds) {
-    const company = getCompanyById(nzId);
-    if (!company) continue;
-    
-    let emissions: EmissionsRow | null = null;
+
+  for (const company of companiesData) {
+    const emissions = emissionsByNzId.get(company.nz_id) || null;
     let scope3Coverage: Scope3CoverageSummary | null = null;
-    
-    if (year) {
-      const e = db.prepare('SELECT * FROM emissions WHERE nz_id = ? AND year = ?').get(nzId, year) as EmissionsRow | undefined;
-      emissions = e || null;
-    } else {
-      const e = db.prepare('SELECT * FROM emissions WHERE nz_id = ? ORDER BY year DESC LIMIT 1').get(nzId) as EmissionsRow | undefined;
-      emissions = e || null;
-    }
-    
+
     if (emissions) {
       scope3Coverage = getScope3CoverageSummary(emissions);
       if (emissions.scope3_total && emissions.scope3_total > 0) {
         scope3Totals.push(emissions.scope3_total);
       }
     }
-    
+
     companies.push({ company, emissions, scope3Coverage });
   }
-  
+
   // Pattern-based warning: Detect large Scope 3 variance (>10x)
   let scope3VarianceWarning: string | null = null;
   if (scope3Totals.length >= 2) {
