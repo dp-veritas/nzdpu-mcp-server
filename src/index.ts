@@ -374,21 +374,37 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             output += `| ${e.year} | ${e.scope1?.toLocaleString() || '—'} | ${e.scope2_lb?.toLocaleString() || '—'} | ${e.scope2_mb?.toLocaleString() || '—'} | ${e.scope3_total?.toLocaleString() || '—'} |\n`;
           }
           
-          // Show latest year's Scope 3 breakdown
+          // Show latest year's Scope 3 breakdown with coverage summary
           const latest = emissions[0];
-          const hasScope3 = latest.scope3_cat_1 || latest.scope3_cat_2 || latest.scope3_cat_3;
+          const scope3Coverage = db.getScope3CoverageSummary(latest);
           
-          if (hasScope3) {
-            output += `\n## Scope 3 Categories (${latest.year})\n\n`;
-            output += `| Category | Value (tCO₂e) | Method | Relevancy |\n`;
-            output += `|----------|---------------|--------|----------|\n`;
+          if (scope3Coverage.categoriesReported > 0 || latest.scope3_total) {
+            output += `\n## Scope 3 Coverage (${latest.year})\n\n`;
+            output += `- **Categories Reported:** ${scope3Coverage.categoriesReported} of 15\n`;
+            
+            if (scope3Coverage.categoriesWithData.length > 0) {
+              output += `- **Reported:** Cat ${scope3Coverage.categoriesWithData.join(', ')}\n`;
+            }
+            if (scope3Coverage.categoriesWithoutData.length > 0 && scope3Coverage.categoriesReported > 0) {
+              output += `- **Not Reported:** Cat ${scope3Coverage.categoriesWithoutData.join(', ')}\n`;
+            }
+            
+            // Highlight dominant category if >50% of total
+            if (scope3Coverage.dominantCategory && scope3Coverage.dominantCategory.percent > 50) {
+              output += `\n⚠️ **Dominant Category:** Cat ${scope3Coverage.dominantCategory.num} (${scope3Coverage.dominantCategory.name}) = ${scope3Coverage.dominantCategory.percent.toFixed(0)}% of total Scope 3\n`;
+            }
+            
+            output += `\n### Scope 3 Category Breakdown\n\n`;
+            output += `| Category | Name | Value (tCO₂e) | % of Total | Method |\n`;
+            output += `|----------|------|---------------|------------|--------|\n`;
             
             for (let i = 1; i <= 15; i++) {
               const val = (latest as any)[`scope3_cat_${i}`];
               const method = (latest as any)[`scope3_cat_${i}_method`];
-              const rel = (latest as any)[`scope3_cat_${i}_relevancy`];
+              const catName = db.SCOPE3_CATEGORY_NAMES[i];
               if (val && val > 0) {
-                output += `| Cat ${i} | ${val.toLocaleString()} | ${method || '—'} | ${rel || '—'} |\n`;
+                const pct = latest.scope3_total ? ((val / latest.scope3_total) * 100).toFixed(1) : '—';
+                output += `| ${i} | ${catName} | ${val.toLocaleString()} | ${pct}% | ${method || '—'} |\n`;
               }
             }
           }
@@ -547,6 +563,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               output += 'Values > 1 billion tCO₂e may indicate unit errors (kg reported as tonnes).\n';
             }
             
+            // Add gating disclaimer for rankings
+            output += '\n---\n';
+            output += '## ⚠️ Ranking Limitations\n\n';
+            output += 'These rankings show **absolute reported emissions** and do not indicate actual environmental performance:\n\n';
+            output += '- **Scope 3 coverage varies** - Companies reporting more categories appear higher\n';
+            output += '- **Business models differ** - Producers vs services have different profiles\n';
+            output += '- **Company size ignored** - Larger companies naturally emit more\n';
+            output += '- **Methodology varies** - Different calculation approaches affect totals\n\n';
+            output += '📊 Use `nzdpu_emissions` and `nzdpu_quality` to understand each company\'s data before drawing conclusions.\n';
+            
             return { content: [{ type: 'text', text: output }] };
           }
           
@@ -670,6 +696,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               output += `- **Company Percentile: ${result.percentileInCombined}%**\n`;
             }
             
+            // Add gating disclaimer for benchmarks
+            output += '\n---\n';
+            output += '## ⚠️ Benchmark Limitations\n\n';
+            output += 'Percentile rankings are based on **absolute emissions** and may not reflect actual performance:\n\n';
+            output += '- **Business models vary** within sectors (e.g., services vs production)\n';
+            output += '- **Scope 3 coverage differs** - companies report different categories\n';
+            output += '- **No size adjustment** - larger companies naturally emit more\n';
+            output += '- **Methodology differences** may affect comparability\n\n';
+            output += '📊 **For deeper analysis:**\n';
+            output += `- Use \`nzdpu_emissions company_id=${companyId}\` to see Scope 3 category coverage\n`;
+            output += `- Use \`nzdpu_quality company_id=${companyId}\` to assess data quality\n`;
+            
             return { content: [{ type: 'text', text: output }] };
           }
           
@@ -699,50 +737,120 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               return { content: [{ type: 'text', text: 'No companies found matching the criteria.' }] };
             }
             
-            const results = db.compareCompanies(nzIds, year);
+            // Use enhanced comparison with Scope 3 coverage
+            const results = db.compareCompaniesWithScope3(nzIds, year);
             const qualityComparison = db.compareDataQuality(nzIds, year);
             
+            // Determine years represented
+            const yearsSet = new Set(results.companies.map((c: { emissions: db.EmissionsRow | null }) => c.emissions?.year).filter(Boolean));
+            const yearsStr = Array.from(yearsSet).sort().reverse().join(', ') || 'N/A';
+            
             let output = '# Company Comparison\n\n';
-            output += `**Companies:** ${results.length}\n\n`;
+            output += `**Companies Analyzed:** ${results.companies.length}\n`;
+            output += `**Reporting Year(s):** ${yearsStr}\n\n`;
             
-            output += `## Emissions (tCO₂e)\n\n`;
-            output += `| Company | Jurisdiction | Scope 1 | S2-LB | S2-MB | Scope 3 | Year | Quality |\n`;
-            output += `|---------|--------------|---------|-------|-------|---------|------|--------|\n`;
+            // Gating disclaimer at the top
+            output += `## ⚠️ Comparison Limitations\n\n`;
+            output += `The emissions data below represents **reported figures only**. Direct ranking is not recommended because:\n\n`;
+            output += `1. **Scope 3 coverage varies** - Companies report different categories\n`;
+            output += `2. **Business models differ** - Not distinguishable in this dataset\n`;
+            output += `3. **No intensity metrics** - Revenue/production data not available\n`;
+            output += `4. **Methodologies vary** - See quality assessment for each company\n\n`;
             
-            for (const { company, emissions } of results) {
+            // Main emissions table with Scope 3 coverage indicator
+            output += `## Emissions Summary (tCO₂e)\n\n`;
+            output += `| Company | Scope 1 | S2-LB | S2-MB | Scope 3 | S3 Cats | Year |\n`;
+            output += `|---------|---------|-------|-------|---------|---------|------|\n`;
+            
+            for (const { company, emissions, scope3Coverage } of results.companies) {
               const s1 = emissions?.scope1?.toLocaleString() || '—';
               const s2lb = emissions?.scope2_lb?.toLocaleString() || '—';
               const s2mb = emissions?.scope2_mb?.toLocaleString() || '—';
               const s3 = emissions?.scope3_total?.toLocaleString() || '—';
+              const s3Cats = scope3Coverage ? `${scope3Coverage.categoriesReported}/15` : '—';
               const yr = emissions?.year || '—';
               
-              const qa = qualityComparison.companies.find(c => c.nzId === company.nz_id)?.assessment;
-              const quality = qa?.overallScore || '—';
-              
-              output += `| ${company.company_name} | ${company.jurisdiction || '—'} | ${s1} | ${s2lb} | ${s2mb} | ${s3} | ${yr} | ${quality} |\n`;
+              output += `| ${company.company_name} | ${s1} | ${s2lb} | ${s2mb} | ${s3} | ${s3Cats} | ${yr} |\n`;
             }
             
-            output += '\n## Data Quality Details\n\n';
-            output += `| Company | Boundary | Verification | Overall |\n`;
+            // Scope 3 Category Comparison Table (key categories)
+            const keyCategories = [1, 3, 6, 7, 11, 15]; // Most commonly material categories
+            const hasAnyCategoryData = results.companies.some((c: { scope3Coverage: db.Scope3CoverageSummary | null }) => 
+              c.scope3Coverage && c.scope3Coverage.categoriesReported > 0
+            );
+            
+            if (hasAnyCategoryData) {
+              output += `\n## Scope 3 Category Comparison\n\n`;
+              output += `*Showing key categories. Use \`nzdpu_emissions\` for full breakdown.*\n\n`;
+              
+              // Header row
+              output += `| Category | ${results.companies.map((c: { company: db.CompanyRow }) => c.company.company_name.substring(0, 15)).join(' | ')} |\n`;
+              output += `|----------|${results.companies.map((_: unknown) => '------').join('|')}|\n`;
+              
+              for (const catNum of keyCategories) {
+                const catName = db.SCOPE3_CATEGORY_NAMES[catNum];
+                const values = results.companies.map((c: { scope3Coverage: db.Scope3CoverageSummary | null }) => {
+                  if (!c.scope3Coverage) return '—';
+                  const val = c.scope3Coverage.categoryValues[catNum];
+                  return val ? db.formatCompactNumber(val) : '—';
+                });
+                output += `| ${catNum}. ${catName.substring(0, 20)} | ${values.join(' | ')} |\n`;
+              }
+              
+              // Categories reported row
+              const catCounts = results.companies.map((c: { scope3Coverage: db.Scope3CoverageSummary | null }) => 
+                c.scope3Coverage ? `${c.scope3Coverage.categoriesReported}/15` : '—'
+              );
+              output += `| **Categories Reported** | ${catCounts.join(' | ')} |\n`;
+              
+              // Highlight dominant categories
+              type CompanyWithScope3 = { company: db.CompanyRow; scope3Coverage: db.Scope3CoverageSummary | null };
+              const dominants = results.companies
+                .filter((c: CompanyWithScope3) => c.scope3Coverage?.dominantCategory && c.scope3Coverage.dominantCategory.percent > 50)
+                .map((c: CompanyWithScope3) => `${c.company.company_name}: Cat ${c.scope3Coverage!.dominantCategory!.num} = ${c.scope3Coverage!.dominantCategory!.percent.toFixed(0)}%`);
+              
+              if (dominants.length > 0) {
+                output += `\n**Dominant Categories (>50% of S3):**\n`;
+                dominants.forEach((d: string) => output += `- ${d}\n`);
+              }
+            }
+            
+            // Data Quality Details
+            output += '\n## Data Quality\n\n';
+            output += `| Company | Boundary | Verification | Quality |\n`;
             output += `|---------|----------|--------------|--------|\n`;
             
             for (const qc of qualityComparison.companies) {
               if (qc.assessment) {
                 const a = qc.assessment;
-                output += `| ${qc.name} | ${a.boundaryScore} | ${a.verificationScore} | **${a.overallScore}** |\n`;
+                output += `| ${qc.name} | ${a.boundaryType || '—'} | ${a.verificationType || 'None'} | **${a.overallScore}** |\n`;
               } else {
                 output += `| ${qc.name} | — | — | — |\n`;
               }
             }
             
-            if (qualityComparison.comparabilityWarnings.length > 0) {
+            // Merge all warnings
+            const allWarnings = [
+              ...results.comparabilityWarnings,
+              ...qualityComparison.comparabilityWarnings
+            ];
+            
+            if (allWarnings.length > 0) {
               output += '\n## ⚠️ Comparability Warnings\n\n';
-              for (const warning of qualityComparison.comparabilityWarnings) {
+              // Deduplicate warnings
+              const uniqueWarnings = [...new Set(allWarnings)];
+              for (const warning of uniqueWarnings) {
                 output += `- ${warning}\n`;
               }
             }
             
-            output += '\n---\n📚 **Note:** S2-LB (location-based) and S2-MB (market-based) cannot be compared against each other.';
+            // Next steps guidance at the bottom
+            output += '\n---\n';
+            output += '📊 **Next Steps for Meaningful Analysis:**\n';
+            output += '- Use `nzdpu_emissions company_id=X` to see full Scope 3 category breakdown\n';
+            output += '- Use `nzdpu_quality company_id=X` to assess methodology and verification\n';
+            output += '- Use `nzdpu_learn topic=scope3` to understand what each category measures\n';
+            output += '\n📚 **Note:** S2-LB (location-based) and S2-MB (market-based) cannot be compared against each other.';
             
             return { content: [{ type: 'text', text: output }] };
           }

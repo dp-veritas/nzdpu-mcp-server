@@ -1010,6 +1010,113 @@ export function getCompanyQualityAssessment(nzId: number, year?: number): {
   };
 }
 
+// ==================== SCOPE 3 COVERAGE HELPERS ====================
+
+/**
+ * Scope 3 category names for display
+ */
+const SCOPE3_CATEGORY_NAMES: Record<number, string> = {
+  1: 'Purchased Goods & Services',
+  2: 'Capital Goods',
+  3: 'Fuel & Energy Activities',
+  4: 'Upstream Transportation',
+  5: 'Waste Generated',
+  6: 'Business Travel',
+  7: 'Employee Commuting',
+  8: 'Upstream Leased Assets',
+  9: 'Downstream Transportation',
+  10: 'Processing of Sold Products',
+  11: 'Use of Sold Products',
+  12: 'End-of-Life Treatment',
+  13: 'Downstream Leased Assets',
+  14: 'Franchises',
+  15: 'Investments',
+};
+
+export { SCOPE3_CATEGORY_NAMES };
+
+/**
+ * Scope 3 coverage summary for a single emissions record
+ */
+export interface Scope3CoverageSummary {
+  categoriesReported: number;
+  categoriesWithData: number[];
+  categoriesWithoutData: number[];
+  totalValue: number | null;
+  categoryValues: Record<number, number>;
+  dominantCategory: {
+    num: number;
+    name: string;
+    value: number;
+    percent: number;
+  } | null;
+  coverageNote: string;
+}
+
+/**
+ * Get Scope 3 coverage summary for an emissions record
+ */
+export function getScope3CoverageSummary(emissions: EmissionsRow): Scope3CoverageSummary {
+  const categoryValues: Record<number, number> = {};
+  const categoriesWithData: number[] = [];
+  const categoriesWithoutData: number[] = [];
+  
+  let maxCategory = { num: 0, value: 0 };
+  
+  for (let i = 1; i <= 15; i++) {
+    const val = (emissions as any)[`scope3_cat_${i}`] as number | null;
+    if (val && val > 0) {
+      categoryValues[i] = val;
+      categoriesWithData.push(i);
+      if (val > maxCategory.value) {
+        maxCategory = { num: i, value: val };
+      }
+    } else {
+      categoriesWithoutData.push(i);
+    }
+  }
+  
+  const totalValue = emissions.scope3_total;
+  
+  // Calculate dominant category
+  let dominantCategory: Scope3CoverageSummary['dominantCategory'] = null;
+  if (maxCategory.num > 0 && totalValue && totalValue > 0) {
+    const percent = (maxCategory.value / totalValue) * 100;
+    dominantCategory = {
+      num: maxCategory.num,
+      name: SCOPE3_CATEGORY_NAMES[maxCategory.num],
+      value: maxCategory.value,
+      percent,
+    };
+  }
+  
+  // Generate coverage note
+  let coverageNote = `${categoriesWithData.length} of 15 categories reported`;
+  if (dominantCategory && dominantCategory.percent > 50) {
+    coverageNote += `. Cat ${dominantCategory.num} (${dominantCategory.name}) = ${dominantCategory.percent.toFixed(0)}% of total`;
+  }
+  
+  return {
+    categoriesReported: categoriesWithData.length,
+    categoriesWithData,
+    categoriesWithoutData,
+    totalValue,
+    categoryValues,
+    dominantCategory,
+    coverageNote,
+  };
+}
+
+/**
+ * Format a number for display (e.g., 1.5M, 200K)
+ */
+export function formatCompactNumber(num: number): string {
+  if (num >= 1e9) return `${(num / 1e9).toFixed(1)}B`;
+  if (num >= 1e6) return `${(num / 1e6).toFixed(1)}M`;
+  if (num >= 1e3) return `${(num / 1e3).toFixed(0)}K`;
+  return num.toFixed(0);
+}
+
 /**
  * Compare quality between companies for comparability warnings
  */
@@ -1073,3 +1180,86 @@ export function compareDataQuality(
   return { companies, comparabilityWarnings };
 }
 
+/**
+ * Extended comparison with Scope 3 coverage analysis
+ * Returns companies with emissions and detailed Scope 3 breakdown
+ */
+export function compareCompaniesWithScope3(
+  nzIds: number[],
+  year?: number
+): {
+  companies: {
+    company: CompanyRow;
+    emissions: EmissionsRow | null;
+    scope3Coverage: Scope3CoverageSummary | null;
+  }[];
+  scope3VarianceWarning: string | null;
+  comparabilityWarnings: string[];
+} {
+  const db = getDatabase();
+  const companies: {
+    company: CompanyRow;
+    emissions: EmissionsRow | null;
+    scope3Coverage: Scope3CoverageSummary | null;
+  }[] = [];
+  
+  const comparabilityWarnings: string[] = [];
+  const scope3Totals: number[] = [];
+  
+  for (const nzId of nzIds) {
+    const company = getCompanyById(nzId);
+    if (!company) continue;
+    
+    let emissions: EmissionsRow | null = null;
+    let scope3Coverage: Scope3CoverageSummary | null = null;
+    
+    if (year) {
+      const e = db.prepare('SELECT * FROM emissions WHERE nz_id = ? AND year = ?').get(nzId, year) as EmissionsRow | undefined;
+      emissions = e || null;
+    } else {
+      const e = db.prepare('SELECT * FROM emissions WHERE nz_id = ? ORDER BY year DESC LIMIT 1').get(nzId) as EmissionsRow | undefined;
+      emissions = e || null;
+    }
+    
+    if (emissions) {
+      scope3Coverage = getScope3CoverageSummary(emissions);
+      if (emissions.scope3_total && emissions.scope3_total > 0) {
+        scope3Totals.push(emissions.scope3_total);
+      }
+    }
+    
+    companies.push({ company, emissions, scope3Coverage });
+  }
+  
+  // Pattern-based warning: Detect large Scope 3 variance (>10x)
+  let scope3VarianceWarning: string | null = null;
+  if (scope3Totals.length >= 2) {
+    const max = Math.max(...scope3Totals);
+    const min = Math.min(...scope3Totals);
+    if (min > 0 && max / min > 10) {
+      scope3VarianceWarning = 
+        `Scope 3 totals vary by more than 10x (${formatCompactNumber(min)} to ${formatCompactNumber(max)} tCO₂e). ` +
+        `This often indicates different category coverage or fundamentally different business models. ` +
+        `Review each company's Scope 3 breakdown before drawing conclusions.`;
+      comparabilityWarnings.push(scope3VarianceWarning);
+    }
+  }
+  
+  // Check for very different category counts
+  const categoryCounts = companies
+    .filter(c => c.scope3Coverage)
+    .map(c => c.scope3Coverage!.categoriesReported);
+  
+  if (categoryCounts.length >= 2) {
+    const maxCats = Math.max(...categoryCounts);
+    const minCats = Math.min(...categoryCounts);
+    if (maxCats - minCats >= 5) {
+      comparabilityWarnings.push(
+        `Scope 3 category coverage varies significantly (${minCats} to ${maxCats} categories reported). ` +
+        `Companies reporting more categories will naturally show higher totals.`
+      );
+    }
+  }
+  
+  return { companies, scope3VarianceWarning, comparabilityWarnings };
+}
