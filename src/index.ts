@@ -69,15 +69,22 @@ const tools: Tool[] = [
   // ============ 1. SEARCH ============
   {
     name: 'nzdpu_search',
-    description: `Search and find companies in the NZDPU database. Use this FIRST to discover companies before getting emissions or benchmarking.
+    description: `Search and find companies in the NZDPU database (12,497 companies, instant SQLite queries).
+
+WORKFLOW: ALWAYS search first to get nz_id, then use that ID with nzdpu_emissions, nzdpu_benchmark, or nzdpu_quality.
 
 WHEN TO USE:
 • Finding companies by name: "Find Microsoft" or "Search for Shell"
-• Filtering by location: "Companies in France" or "UK energy companies"
+• Filtering by location: "Companies in France" or "UK energy companies"  
 • Filtering by sector: "Oil & Gas companies" or "Financial services firms"
 • Looking up by LEI: "Find company with LEI 549300..."
 
-RETURNS: Company profiles with nz_id, name, jurisdiction, SICS classification (sector > sub-sector > industry), and LEI.`,
+SICS HIERARCHY (most specific wins):
+• sector: Broad category (e.g., "Extractives & Minerals Processing", "Financials")
+• sub_sector: More specific (e.g., "Oil & Gas", "Commercial Banks")
+• industry: Most specific (e.g., "Oil & Gas Exploration & Production")
+
+RETURNS: Company profiles with nz_id (use this ID with other tools), name, jurisdiction, and SICS classification.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -95,16 +102,25 @@ RETURNS: Company profiles with nz_id, name, jurisdiction, SICS classification (s
   // ============ 2. EMISSIONS ============
   {
     name: 'nzdpu_emissions',
-    description: `Get emissions data for a specific company. Returns Scope 1, Scope 2 (both location-based AND market-based), and Scope 3 (all 15 categories).
+    description: `Get emissions data for a specific company. Returns Scope 1, Scope 2 (LB and MB), and Scope 3 (all 15 categories with coverage analysis).
 
 WHEN TO USE:
-• After finding a company with nzdpu_search
+• After finding a company with nzdpu_search (need nz_id first)
 • Getting detailed emissions breakdown: "What are BP's emissions?"
 • Year-specific queries: "Microsoft's 2022 emissions"
 
-RETURNS: Emissions values, methodologies, organizational boundary, and verification status.
+CRITICAL RULES:
+• NEVER compare Scope 2 Location-Based to Market-Based - they measure different things
+• Check Scope 3 coverage (X/15 categories) before comparing totals across companies
+• Values >1 billion tCO₂e may indicate unit errors (kg reported as tonnes)
+• Round numbers (exactly 1,000,000) may be estimates, not measured values
 
-NOTE: Location-based and market-based Scope 2 cannot be compared - they measure different things.`,
+SECTOR MATERIALITY (which Scope 3 categories matter most):
+• Oil & Gas: Category 11 (Use of Sold Products) dominates
+• Financials: Category 15 (Investments) dominates
+• Retail: Category 1 (Purchased Goods) dominates
+
+RETURNS: Emissions by year, Scope 3 coverage summary, category breakdown with %, methodologies, boundary, verification.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -195,7 +211,18 @@ MODE OPTIONS:
 • "compare" - Side-by-side comparison of multiple companies with quality scores
 • "peer_stats" - Aggregate statistics for a filtered peer group
 
-IMPORTANT: For Scope 2, specify scope2_lb (location-based) or scope2_mb (market-based). These cannot be mixed.`,
+CRITICAL COMPARISON RULES:
+• For Scope 2: ALWAYS specify scope2_lb OR scope2_mb - NEVER mix them
+• Different organizational boundaries (operational control vs equity share) affect comparability
+• Scope 3 totals often CANNOT be compared - check "S3 Cats" column (15/15 vs 3/15 is not comparable)
+• Same-year comparisons are preferred - cross-year comparisons need acknowledgment
+• Higher percentile = higher emissions relative to peers (not necessarily "worse" - context matters)
+
+WHAT'S INCLUDED IN OUTPUT:
+• Emissions summary with Scope 3 category coverage (S3 Cats column)
+• Data quality scores (boundary type, verification level)
+• Comparability warnings when data shouldn't be directly compared
+• Next steps guidance for deeper analysis`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -229,20 +256,31 @@ IMPORTANT: For Scope 2, specify scope2_lb (location-based) or scope2_mb (market-
   // ============ 6. QUALITY ============
   {
     name: 'nzdpu_quality',
-    description: `Get detailed data quality assessment for a company's disclosure. Analyzes methodology, boundary, verification, and Scope 3 category methods.
+    description: `Get detailed data quality assessment for a company's disclosure. CALL THIS before trusting numbers for important decisions.
 
 WHEN TO USE:
 • Before trusting reported numbers: "Is BP's data reliable?"
 • Understanding methodology: "What methods did Shell use for Scope 3?"
 • Checking comparability: "Can I compare these two companies?"
+• Before presenting emissions in reports or analysis
 
-RETURNS:
-• Overall quality score (HIGH/MEDIUM/LOW)
-• Organizational boundary type and score
-• Verification/assurance level
-• Scope 3 methodology per category (PRIMARY/MODELED/UNKNOWN)
-• Year-over-year methodology changes
-• Specific quality warnings`,
+INTERPRETING SCORES:
+• HIGH: Third-party verified (reasonable assurance), standard boundary, consistent methodology
+• MEDIUM: Limited assurance, or non-standard methods, or some gaps
+• LOW: Self-reported only, unknown methods, significant gaps
+
+SCOPE 3 METHODOLOGY TIERS (quality hierarchy):
+• PRIMARY: Supplier-specific, hybrid, asset-specific (uses actual data - highest quality)
+• MODELED: Spend-based, average-data, distance-based (uses estimates - acceptable)
+• UNKNOWN: Method not disclosed (cannot assess quality)
+
+BOUNDARY TYPES (affect comparability):
+• Operational control: Operations you control (standard)
+• Financial control: Operations where you direct policy (standard)
+• Equity share: Proportional to ownership % (standard)
+• Company-defined: Custom scope (may not be comparable)
+
+RETURNS: Overall score, component scores, Scope 3 per-category methodology, methodology changes over time, warnings.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -547,19 +585,44 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             let output = '# SICS Classification Hierarchy\n\n';
             output += '*Sector > Sub-Sector > Industry*\n\n';
             
-            const bySector = new Map<string, typeof subSectors>();
+            // Group by sector, then by sub-sector
+            const bySector = new Map<string, Map<string, { industry: string; count: number }[]>>();
+            
             for (const item of subSectors) {
-              const existing = bySector.get(item.sector) || [];
-              existing.push(item);
-              bySector.set(item.sector, existing);
+              if (!bySector.has(item.sector)) {
+                bySector.set(item.sector, new Map());
+              }
+              const sectorMap = bySector.get(item.sector)!;
+              if (!sectorMap.has(item.sub_sector)) {
+                sectorMap.set(item.sub_sector, []);
+              }
+              sectorMap.get(item.sub_sector)!.push({ industry: item.industry, count: item.count });
             }
             
-            for (const [sector, items] of bySector) {
-              output += `## ${sector}\n\n`;
-              for (const item of items) {
-                output += `- **${item.sub_sector}** > ${item.industry} (${item.count} companies)\n`;
+            for (const [sector, subSectorMap] of bySector) {
+              // Calculate sector total
+              let sectorTotal = 0;
+              for (const industries of subSectorMap.values()) {
+                for (const ind of industries) {
+                  sectorTotal += ind.count;
+                }
               }
-              output += '\n';
+              
+              output += `## ${sector} (${sectorTotal.toLocaleString()} companies)\n\n`;
+              
+              for (const [subSector, industries] of subSectorMap) {
+                // Calculate sub-sector total
+                const subSectorTotal = industries.reduce((sum, ind) => sum + ind.count, 0);
+                
+                output += `### ${subSector} (${subSectorTotal.toLocaleString()} companies)\n\n`;
+                output += `| Industry | Companies |\n`;
+                output += `|----------|----------|\n`;
+                
+                for (const ind of industries) {
+                  output += `| ${ind.industry} | ${ind.count.toLocaleString()} |\n`;
+                }
+                output += '\n';
+              }
             }
             
             return { content: [{ type: 'text', text: output }] };

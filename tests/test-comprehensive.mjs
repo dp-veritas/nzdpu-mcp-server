@@ -231,9 +231,11 @@ async function testListTool() {
   assertContains(res.text, 'United States', 'Should contain US');
   console.log('  ✓ List jurisdictions works');
   
-  // Test 3: List subsectors
+  // Test 3: List subsectors (now with grouped totals)
   res = await callTool('nzdpu_list', { type: 'subsectors', sector: 'Financials' });
   assertContains(res.text, 'Hierarchy', 'Subsector hierarchy');
+  assertContains(res.text, 'companies)', 'Has company totals in headers');
+  assertContains(res.text, '| Industry |', 'Has industry table');
   console.log('  ✓ List subsectors works');
   
   results.passed += 3;
