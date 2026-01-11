@@ -1,0 +1,20 @@
+{
+  "name": "nzdpu_emissions",
+  "description": "Get emissions data for a specific company. Returns Scope 1, Scope 2 (LB and MB), and Scope 3 (all 15 categories with coverage analysis). Use nzdpu_search first to get the company's nz_id. CRITICAL: Never compare Scope 2 Location-Based to Market-Based - they measure different things.",
+  "arguments": {
+    "type": "object",
+    "properties": {
+      "company_id": {
+        "type": "number",
+        "description": "The company nz_id (get this from nzdpu_search first)"
+      },
+      "year": {
+        "type": "number",
+        "description": "Specific reporting year (omit for all available years)"
+      }
+    },
+    "required": ["company_id"],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

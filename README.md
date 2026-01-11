@@ -391,7 +391,7 @@ The MCP provides 7 intuitive, parameterized tools designed for easy LLM selectio
 | `nzdpu_search` | Find companies by name, LEI, sector, or jurisdiction | `name`, `lei`, `jurisdiction`, `sector`, `sub_sector` |
 | `nzdpu_emissions` | Get emissions data for a specific company | `company_id`, `year` |
 | `nzdpu_list` | Explore available sectors, jurisdictions, or SICS hierarchy | `type`: sectors, jurisdictions, subsectors |
-| `nzdpu_analyze` | Dataset-wide analytics (stats, top emitters, disclosure patterns) | `analysis`: overview, top_emitters, disclosure, data_issues |
+| `nzdpu_analyze` | Dataset-wide analytics, time-series, comparisons | `analysis`: overview, top_emitters, disclosure, data_issues, year_comparison, peer_trends |
 | `nzdpu_benchmark` | Compare companies or benchmark against peers | `mode`: single, compare, peer_stats |
 | `nzdpu_quality` | Detailed data quality assessment for a company | `company_id`, `year` |
 | `nzdpu_learn` | Educational content about GHG accounting | `topic`: concepts, scope2, scope3, mistakes, comparability |
@@ -426,13 +426,16 @@ Examples:
 ```
 
 #### `nzdpu_analyze`
-Perform analytics across the full dataset.
+Perform analytics across the full dataset including time-series analysis.
 ```
 Examples:
 - Overview: { analysis: "overview" }
 - Top emitters: { analysis: "top_emitters", scope: "scope1", limit: 10 }
+- Top emitters (filtered): { analysis: "top_emitters", scope: "scope1", limit: 10, sics_sub_sector: "Oil & Gas" }
 - Disclosure history: { analysis: "disclosure", min_disclosures: 5 }
 - Data issues: { analysis: "data_issues" }
+- Year comparison: { analysis: "year_comparison", company_id: 12290, year1: 2020, year2: 2022 }
+- Peer trends: { analysis: "peer_trends", scope: "scope1", sics_sector: "Technology & Communications" }
 ```
 
 #### `nzdpu_benchmark`
@@ -668,25 +671,53 @@ npm install
 npm run build
 ```
 
+### Architecture
+
+```
+User Query → MCP Client → stdio transport → src/index.ts (MCP Server)
+                                               ↓
+                     ┌────────────────────────┼────────────────────────┐
+                     ↓                        ↓                        ↓
+              Database Layer          Knowledge Layer          Benchmarking Engine
+              (src/db/)              (src/knowledge/)          (src/benchmarking/)
+                     ↓
+              SQLite (data/nzdpu.db)
+              30MB, instant queries (<100ms)
+```
+
 ### Project Structure
 
 ```
 nzdpu-mcp-server/
 ├── src/
-│   ├── index.ts           # MCP server & tool handlers
+│   ├── index.ts              # MCP server & tool handlers
+│   ├── api/
+│   │   └── client.ts         # NZDPU API client (maintainers only)
+│   ├── benchmarking/
+│   │   └── engine.ts         # Peer comparison logic
 │   ├── db/
-│   │   ├── schema.ts      # SQLite schema
-│   │   └── queries.ts     # Database query functions
+│   │   ├── schema.ts         # SQLite schema
+│   │   ├── queries.ts        # Database query functions
+│   │   ├── yearComparison.ts # Year-to-year analysis
+│   │   └── peerTrends.ts     # Time-series peer analytics
 │   ├── knowledge/
-│   │   ├── concepts.ts    # GHG accounting concepts
-│   │   ├── comparability.ts
-│   │   └── materiality.ts # Sector-specific S3 materiality
+│   │   ├── concepts.ts       # GHG accounting concepts
+│   │   ├── comparability.ts  # Data comparability rules
+│   │   ├── materiality.ts    # Sector-specific S3 materiality
+│   │   ├── advanced.ts       # Frameworks, emission factors
+│   │   ├── explanations.ts   # Educational content
+│   │   └── disclaimers.ts    # Standard warnings
+│   ├── scripts/
+│   │   └── build-database.ts # Database build (maintainers only)
 │   └── types/
-│       └── index.ts       # TypeScript interfaces
+│       └── index.ts          # TypeScript interfaces
 ├── data/
-│   └── nzdpu.db           # SQLite database (PRE-BUNDLED)
-└── scripts/
-    └── build-database.ts  # Database build (maintainers only)
+│   └── nzdpu.db              # SQLite database (PRE-BUNDLED)
+├── tools/
+│   └── *.json                # MCP tool descriptors
+├── tests/
+│   └── *.mjs                 # Integration test scripts
+└── rule-nzdpu.md             # AI assistant guidance rules
 ```
 
 ---

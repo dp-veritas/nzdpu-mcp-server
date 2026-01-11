@@ -1,0 +1,71 @@
+{
+  "name": "nzdpu_analyze",
+  "description": "Perform analytics across the full 12,497-company dataset. All queries are instant (SQLite-backed). Supports dataset overview, top emitters with filtering, disclosure patterns, data quality audits, year-over-year comparisons, and peer group trend analysis.",
+  "arguments": {
+    "type": "object",
+    "properties": {
+      "analysis": {
+        "type": "string",
+        "enum": ["overview", "top_emitters", "disclosure", "data_issues", "year_comparison", "peer_trends"],
+        "description": "Type of analysis: overview (dataset stats), top_emitters (ranked by scope), disclosure (companies by history), data_issues (quality problems), year_comparison (compare two years), peer_trends (time-series)"
+      },
+      "scope": {
+        "type": "string",
+        "enum": ["scope1", "scope2_lb", "scope2_mb", "scope3", "scope3_cat_1", "scope3_cat_2", "scope3_cat_3", "scope3_cat_4", "scope3_cat_5", "scope3_cat_6", "scope3_cat_7", "scope3_cat_8", "scope3_cat_9", "scope3_cat_10", "scope3_cat_11", "scope3_cat_12", "scope3_cat_13", "scope3_cat_14", "scope3_cat_15"],
+        "description": "For top_emitters/peer_trends: which scope to analyze"
+      },
+      "year": {
+        "type": "number",
+        "description": "Filter to specific year (optional)"
+      },
+      "jurisdiction": {
+        "type": "string",
+        "description": "For top_emitters: filter by jurisdiction"
+      },
+      "sics_sector": {
+        "type": "string",
+        "description": "For top_emitters/peer_trends: filter by SICS sector"
+      },
+      "sics_sub_sector": {
+        "type": "string",
+        "description": "For top_emitters/peer_trends: filter by SICS sub-sector"
+      },
+      "sics_industry": {
+        "type": "string",
+        "description": "For top_emitters: filter by SICS industry"
+      },
+      "min_disclosures": {
+        "type": "number",
+        "description": "For disclosure: minimum years of history"
+      },
+      "limit": {
+        "type": "number",
+        "description": "Max results (default: 20)",
+        "default": 20
+      },
+      "company_id": {
+        "type": "number",
+        "description": "For year_comparison: company nz_id to compare"
+      },
+      "year1": {
+        "type": "number",
+        "description": "For year_comparison: first year to compare"
+      },
+      "year2": {
+        "type": "number",
+        "description": "For year_comparison: second year to compare"
+      },
+      "start_year": {
+        "type": "number",
+        "description": "For peer_trends: start year of analysis (optional)"
+      },
+      "end_year": {
+        "type": "number",
+        "description": "For peer_trends: end year of analysis (optional)"
+      }
+    },
+    "required": ["analysis"],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

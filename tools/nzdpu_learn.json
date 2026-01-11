@@ -1,0 +1,20 @@
+{
+  "name": "nzdpu_learn",
+  "description": "Educational content about GHG emissions accounting. Use to understand concepts, methodologies, and why certain comparisons are invalid. Covers Scope 1/2/3, organizational boundaries, verification, reporting frameworks, emission factors, and common mistakes.",
+  "arguments": {
+    "type": "object",
+    "properties": {
+      "topic": {
+        "type": "string",
+        "description": "Topic to learn: 'concepts' (list all), 'concept:<name>', 'scope2', 'scope3', 'scope3:<number>', 'mistakes', 'comparability:<type>', 'double_counting', 'frameworks', 'framework:<name>', 'emission_factors', 'base_year', 'materiality:<category>'"
+      },
+      "summary": {
+        "type": "boolean",
+        "description": "Return brief summary (1-2 sentences) instead of full explanation"
+      }
+    },
+    "required": ["topic"],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

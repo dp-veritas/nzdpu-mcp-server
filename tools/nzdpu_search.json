@@ -1,0 +1,40 @@
+{
+  "name": "nzdpu_search",
+  "description": "Search and find companies in the NZDPU database (12,497 companies). ALWAYS search first to get nz_id, then use that ID with nzdpu_emissions, nzdpu_benchmark, or nzdpu_quality. Supports filtering by name, LEI, jurisdiction, sector, sub-sector, and industry.",
+  "arguments": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Company name to search (partial match supported)"
+      },
+      "lei": {
+        "type": "string",
+        "description": "Legal Entity Identifier (20-character code)"
+      },
+      "jurisdiction": {
+        "type": "string",
+        "description": "Country/region (e.g., 'France', 'United States of America', 'Japan')"
+      },
+      "sector": {
+        "type": "string",
+        "description": "SICS sector (e.g., 'Extractives & Minerals Processing', 'Financials')"
+      },
+      "sub_sector": {
+        "type": "string",
+        "description": "SICS sub-sector (e.g., 'Oil & Gas', 'Commercial Banks')"
+      },
+      "industry": {
+        "type": "string",
+        "description": "SICS industry (more specific than sub-sector)"
+      },
+      "limit": {
+        "type": "number",
+        "description": "Max results to return (default: 20)",
+        "default": 20
+      }
+    },
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

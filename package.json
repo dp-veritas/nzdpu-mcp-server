@@ -9,7 +9,9 @@
   },
   "files": [
     "dist",
-    "data/nzdpu.db"
+    "data/nzdpu.db",
+    "tools",
+    "rule-nzdpu.md"
   ],
   "scripts": {
     "build": "tsc",

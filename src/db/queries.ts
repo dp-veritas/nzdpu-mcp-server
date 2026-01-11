@@ -81,6 +81,15 @@ export interface TopEmitter {
   year: number;
   jurisdiction: string | null;
   sics_sector: string | null;
+  sics_sub_sector: string | null;
+  sics_industry: string | null;
+}
+
+export interface TopEmittersFilters {
+  jurisdiction?: string;
+  sics_sector?: string;
+  sics_sub_sector?: string;
+  sics_industry?: string;
 }
 
 export interface DatasetStats {
@@ -198,10 +207,11 @@ export function getDatasetStats(): DatasetStats {
 export function getTopEmitters(
   scope: 'scope1' | 'scope2_lb' | 'scope2_mb' | 'scope3' | `scope3_cat_${number}`,
   limit: number = 10,
-  year?: number
+  year?: number,
+  filters?: TopEmittersFilters
 ): TopEmitter[] {
   const db = getDatabase();
-  
+
   // Map scope to column name
   let column: string;
   if (scope === 'scope1') column = 'scope1';
@@ -214,29 +224,50 @@ export function getTopEmitters(
   } else {
     column = 'scope1';
   }
-  
+
   let query = `
-    SELECT 
+    SELECT
       e.nz_id,
       c.company_name,
       e.${column} as value,
       e.year,
       c.jurisdiction,
-      c.sics_sector
+      c.sics_sector,
+      c.sics_sub_sector,
+      c.sics_industry
     FROM emissions e
     JOIN companies c ON e.nz_id = c.nz_id
     WHERE e.${column} IS NOT NULL AND e.${column} > 0
   `;
-  
-  const params: (number | undefined)[] = [];
+
+  const params: (string | number | undefined)[] = [];
+
+  // Add optional filters
+  if (filters?.jurisdiction) {
+    query += ' AND LOWER(c.jurisdiction) = LOWER(?)';
+    params.push(filters.jurisdiction);
+  }
+  if (filters?.sics_sector) {
+    query += ' AND LOWER(c.sics_sector) = LOWER(?)';
+    params.push(filters.sics_sector);
+  }
+  if (filters?.sics_sub_sector) {
+    query += ' AND LOWER(c.sics_sub_sector) = LOWER(?)';
+    params.push(filters.sics_sub_sector);
+  }
+  if (filters?.sics_industry) {
+    query += ' AND LOWER(c.sics_industry) = LOWER(?)';
+    params.push(filters.sics_industry);
+  }
+
   if (year) {
     query += ' AND e.year = ?';
     params.push(year);
   }
-  
+
   query += ` ORDER BY e.${column} DESC LIMIT ?`;
   params.push(limit);
-  
+
   return db.prepare(query).all(...params) as TopEmitter[];
 }
 
@@ -836,12 +867,81 @@ function assessS12MethodologyQuality(methodology: string | null): QualityScore {
 
 /**
  * Get method quality tier for Scope 3
+ * FIX-M2: Enhanced with fuzzy matching for better classification
  */
 function getScope3MethodTier(method: string | null): MethodQualityTier {
   if (!method || method === '—') {
     return 'UNKNOWN';
   }
-  return SCOPE3_METHOD_QUALITY[method] || 'UNKNOWN';
+
+  // First try exact match (fastest)
+  const exactMatch = SCOPE3_METHOD_QUALITY[method];
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  // Fuzzy matching - check for key terms (case-insensitive)
+  const methodLower = method.toLowerCase();
+
+  // PRIMARY tier keywords (supplier/customer/asset-specific data)
+  const primaryKeywords = [
+    'supplier-specific',
+    'supplier specific',
+    'primary data',
+    'asset-specific',
+    'asset specific',
+    'site-specific',
+    'site specific',
+    'fuel-based',
+    'fuel based',
+    'lessor-specific',
+    'lessor specific',
+    'lessee-specific',
+    'lessee specific',
+    'franchise-specific',
+    'franchise specific',
+    'investment-specific',
+    'investment specific',
+    'hybrid',
+    'customer-specific',
+    'customer specific',
+    'actual data',
+    'direct measurement'
+  ];
+
+  for (const keyword of primaryKeywords) {
+    if (methodLower.includes(keyword)) {
+      return 'PRIMARY';
+    }
+  }
+
+  // MODELED tier keywords (estimates, averages, spend-based)
+  const modeledKeywords = [
+    'spend-based',
+    'spend based',
+    'average-data',
+    'average data',
+    'distance-based',
+    'distance based',
+    'waste-type',
+    'average product',
+    'industry average',
+    'estimated',
+    'estimate',
+    'modeled',
+    'model',
+    'calculated',
+    'proxy'
+  ];
+
+  for (const keyword of modeledKeywords) {
+    if (methodLower.includes(keyword)) {
+      return 'MODELED';
+    }
+  }
+
+  // If no match found, return UNKNOWN
+  return 'UNKNOWN';
 }
 
 /**
@@ -1357,3 +1457,20 @@ export function compareCompaniesWithScope3(
   
   return { companies, scope3VarianceWarning, comparabilityWarnings };
 }
+
+// ==================== YEAR COMPARISON ====================
+// Re-export year comparison functions (FIX-H2)
+export {
+  compareYears,
+  getTimeSeries,
+  type YearComparisonResult,
+  type TimeSeriesPoint,
+} from './yearComparison.js';
+
+// ==================== PEER TRENDS ====================
+// Re-export peer trend functions (FIX-H3)
+export {
+  getPeerTrend,
+  type PeerTrendResult,
+  type PeerTrendDataPoint,
+} from './peerTrends.js';

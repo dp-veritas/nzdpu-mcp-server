@@ -174,23 +174,34 @@ ANALYSIS OPTIONS:
 • "overview" - Total counts, breakdown by sector/jurisdiction/year
 • "top_emitters" - Ranked list by any scope (requires 'scope' param)
 • "disclosure" - Companies by years of disclosure history
-• "data_issues" - Potential quality problems (unit errors, outliers)`,
+• "data_issues" - Potential quality problems (unit errors, outliers)
+• "year_comparison" - Compare emissions between two years for a company (requires 'company_id', 'year1', 'year2')
+• "peer_trends" - Time-series trend analysis for peer groups (requires 'scope', optional filters and year range)`,
     inputSchema: {
       type: 'object',
       properties: {
-        analysis: { 
-          type: 'string', 
-          enum: ['overview', 'top_emitters', 'disclosure', 'data_issues'],
+        analysis: {
+          type: 'string',
+          enum: ['overview', 'top_emitters', 'disclosure', 'data_issues', 'year_comparison', 'peer_trends'],
           description: 'Type of analysis to perform'
         },
-        scope: { 
-          type: 'string', 
+        scope: {
+          type: 'string',
           enum: ['scope1', 'scope2_lb', 'scope2_mb', 'scope3', 'scope3_cat_1', 'scope3_cat_2', 'scope3_cat_3', 'scope3_cat_4', 'scope3_cat_5', 'scope3_cat_6', 'scope3_cat_7', 'scope3_cat_8', 'scope3_cat_9', 'scope3_cat_10', 'scope3_cat_11', 'scope3_cat_12', 'scope3_cat_13', 'scope3_cat_14', 'scope3_cat_15'],
-          description: 'For top_emitters: which scope to rank by' 
+          description: 'For top_emitters: which scope to rank by'
         },
         year: { type: 'number', description: 'Filter to specific year (optional)' },
+        jurisdiction: { type: 'string', description: 'For top_emitters: filter by jurisdiction (optional)' },
+        sics_sector: { type: 'string', description: 'For top_emitters: filter by SICS sector (optional)' },
+        sics_sub_sector: { type: 'string', description: 'For top_emitters: filter by SICS sub-sector (optional)' },
+        sics_industry: { type: 'string', description: 'For top_emitters: filter by SICS industry (optional)' },
         min_disclosures: { type: 'number', description: 'For disclosure: minimum years of history' },
         limit: { type: 'number', description: 'Max results (default: 20)', default: 20 },
+        company_id: { type: 'number', description: 'For year_comparison: company nz_id to compare' },
+        year1: { type: 'number', description: 'For year_comparison: first year to compare' },
+        year2: { type: 'number', description: 'For year_comparison: second year to compare' },
+        start_year: { type: 'number', description: 'For peer_trends: start year of analysis (optional, defaults to earliest)' },
+        end_year: { type: 'number', description: 'For peer_trends: end year of analysis (optional, defaults to latest)' },
       },
       required: ['analysis'],
     },
@@ -377,8 +388,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // If LEI provided, search by LEI
         if (lei) {
           const company = db.getCompanyByLei(lei);
+          // FIX-L5: Enhanced LEI error message with format guidance
           if (!company) {
-            return { content: [{ type: 'text', text: `No company found with LEI: ${lei}` }] };
+            let errorMsg = `No company found with LEI: ${lei}\n\n`;
+            errorMsg += `**LEI Format:** A 20-character alphanumeric code (e.g., 549300VBUQQ1ZQMVLZ77)\n\n`;
+            errorMsg += `**Suggestions:**\n`;
+            errorMsg += `- Verify the LEI is correct at https://www.gleif.org/\n`;
+            errorMsg += `- Try searching by company name instead\n`;
+            errorMsg += `- Check if the company is in the database with name search\n`;
+            return { content: [{ type: 'text', text: errorMsg }] };
           }
           
           let output = `# Company Found by LEI\n\n`;
@@ -473,7 +491,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!companyId) throw new Error('company_id is required. Use nzdpu_search first to find the nz_id.');
         
         const company = db.getCompanyById(companyId);
-        if (!company) throw new Error(`Company with nz_id ${companyId} not found`);
+        // FIX-L4: Enhanced error message with guidance
+        if (!company) throw new Error(`Company with nz_id ${companyId} not found. Use nzdpu_search to find companies and get their nz_id.`);
         
         const emissions = db.getCompanyEmissions(companyId, args?.year as number | undefined);
         
@@ -497,44 +516,49 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             output += `| ${e.year} | ${e.scope1?.toLocaleString() || '—'} | ${e.scope2_lb?.toLocaleString() || '—'} | ${e.scope2_mb?.toLocaleString() || '—'} | ${e.scope3_total?.toLocaleString() || '—'} |\n`;
           }
           
-          // Show latest year's Scope 3 breakdown with coverage summary
-          const latest = emissions[0];
-          const scope3Coverage = db.getScope3CoverageSummary(latest);
-          
-          if (scope3Coverage.categoriesReported > 0 || latest.scope3_total) {
-            output += `\n## Scope 3 Coverage (${latest.year})\n\n`;
-            output += `- **Categories Reported:** ${scope3Coverage.categoriesReported} of 15\n`;
-            
-            if (scope3Coverage.categoriesWithData.length > 0) {
-              output += `- **Reported:** Cat ${scope3Coverage.categoriesWithData.join(', ')}\n`;
-            }
-            if (scope3Coverage.categoriesWithoutData.length > 0 && scope3Coverage.categoriesReported > 0) {
-              output += `- **Not Reported:** Cat ${scope3Coverage.categoriesWithoutData.join(', ')}\n`;
-            }
-            
-            // Highlight dominant category if >50% of total
-            if (scope3Coverage.dominantCategory && scope3Coverage.dominantCategory.percent > 50) {
-              output += `\n⚠️ **Dominant Category:** Cat ${scope3Coverage.dominantCategory.num} (${scope3Coverage.dominantCategory.name}) = ${scope3Coverage.dominantCategory.percent.toFixed(0)}% of total Scope 3\n`;
-            }
-            
-            output += `\n### Scope 3 Category Breakdown\n\n`;
-            output += `| Category | Name | Value (tCO₂e) | % of Total | Method |\n`;
-            output += `|----------|------|---------------|------------|--------|\n`;
-            
-            for (let i = 1; i <= 15; i++) {
-              const val = (latest as any)[`scope3_cat_${i}`];
-              const method = (latest as any)[`scope3_cat_${i}_method`];
-              const catName = db.SCOPE3_CATEGORY_NAMES[i];
-              if (val && val > 0) {
-                const pct = latest.scope3_total ? ((val / latest.scope3_total) * 100).toFixed(1) : '—';
-                output += `| ${i} | ${catName} | ${val.toLocaleString()} | ${pct}% | ${method || '—'} |\n`;
+          // Show Scope 3 breakdown for ALL years (FIX-M1)
+          const yearsWithScope3 = emissions.filter(e => e.scope3_total && e.scope3_total > 0);
+
+          if (yearsWithScope3.length > 0) {
+            output += `\n## Scope 3 Breakdown by Year\n\n`;
+
+            for (const yearData of yearsWithScope3) {
+              const scope3Coverage = db.getScope3CoverageSummary(yearData);
+
+              output += `### ${yearData.year}\n\n`;
+              output += `- **Categories Reported:** ${scope3Coverage.categoriesReported} of 15`;
+
+              if (scope3Coverage.categoriesWithData.length > 0) {
+                output += ` (Cat ${scope3Coverage.categoriesWithData.join(', ')})`;
               }
+              output += `\n`;
+
+              // Highlight dominant category if >50% of total
+              if (scope3Coverage.dominantCategory && scope3Coverage.dominantCategory.percent > 50) {
+                output += `- **Dominant Category:** Cat ${scope3Coverage.dominantCategory.num} (${scope3Coverage.dominantCategory.name}) = ${scope3Coverage.dominantCategory.percent.toFixed(0)}% of total\n`;
+              }
+
+              output += `\n| Category | Name | Value (tCO₂e) | % | Method |\n`;
+              output += `|----------|------|---------------|---|--------|\n`;
+
+              for (let i = 1; i <= 15; i++) {
+                const val = (yearData as any)[`scope3_cat_${i}`];
+                const method = (yearData as any)[`scope3_cat_${i}_method`];
+                const catName = db.SCOPE3_CATEGORY_NAMES[i];
+                if (val && val > 0) {
+                  const pct = yearData.scope3_total ? ((val / yearData.scope3_total) * 100).toFixed(1) : '—';
+                  output += `| ${i} | ${catName} | ${val.toLocaleString()} | ${pct}% | ${method || '—'} |\n`;
+                }
+              }
+
+              output += `\n`;
             }
           }
-          
-          // Methodology info
+
+          // Methodology info (show for latest year)
+          const latest = emissions[0];
           if (latest.organizational_boundary || latest.verification_status) {
-            output += `\n## Methodology & Quality\n\n`;
+            output += `## Methodology & Quality (${latest.year})\n\n`;
             output += `- **Organizational Boundary:** ${latest.organizational_boundary || 'Not specified'}\n`;
             output += `- **Verification:** ${latest.verification_status || 'Not specified'}\n`;
             if (latest.scope1_methodology) output += `- **Scope 1 Method:** ${latest.scope1_methodology}\n`;
@@ -678,11 +702,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const scope = args?.scope as string;
             const limit = (args?.limit as number) || 10;
             const year = args?.year as number | undefined;
-            
+            const jurisdiction = args?.jurisdiction as string | undefined;
+            const sics_sector = args?.sics_sector as string | undefined;
+            const sics_sub_sector = args?.sics_sub_sector as string | undefined;
+            const sics_industry = args?.sics_industry as string | undefined;
+
             if (!scope) throw new Error('scope is required for top_emitters analysis');
-            
-            const emitters = db.getTopEmitters(scope as any, limit, year);
-            
+
+            // Build filters object
+            const filters: db.TopEmittersFilters | undefined =
+              (jurisdiction || sics_sector || sics_sub_sector || sics_industry)
+                ? { jurisdiction, sics_sector, sics_sub_sector, sics_industry }
+                : undefined;
+
+            const emitters = db.getTopEmitters(scope as any, limit, year, filters);
+
             const scopeNames: Record<string, string> = {
               scope1: 'Scope 1',
               scope2_lb: 'Scope 2 (Location-Based)',
@@ -693,24 +727,44 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             if (scope.startsWith('scope3_cat_')) {
               scopeDisplay = `Scope 3 Category ${scope.replace('scope3_cat_', '')}`;
             }
-            
+
             let output = `# Top ${limit} ${scopeDisplay} Emitters\n\n`;
-            if (year) output += `*Year: ${year}*\n\n`;
-            
+
+            // Show active filters
+            const activeFilters = [];
+            if (year) activeFilters.push(`Year: ${year}`);
+            if (jurisdiction) activeFilters.push(`Jurisdiction: ${jurisdiction}`);
+            if (sics_sector) activeFilters.push(`Sector: ${sics_sector}`);
+            if (sics_sub_sector) activeFilters.push(`Sub-Sector: ${sics_sub_sector}`);
+            if (sics_industry) activeFilters.push(`Industry: ${sics_industry}`);
+
+            if (activeFilters.length > 0) {
+              output += `**Filters:** ${activeFilters.join(' | ')}\n\n`;
+            }
+
+            if (emitters.length === 0) {
+              output += '❌ No companies found matching the specified filters.\n\n';
+              output += '**Suggestions:**\n';
+              output += '- Check filter spelling and capitalization\n';
+              output += '- Use `nzdpu_list` to see available jurisdictions, sectors, and sub-sectors\n';
+              output += '- Try broader filters (e.g., sector instead of sub-sector)\n';
+              return { content: [{ type: 'text', text: output }] };
+            }
+
             output += `| Rank | Company | Value (tCO₂e) | Year | Jurisdiction | Sector |\n`;
             output += `|------|---------|---------------|------|--------------|--------|\n`;
-            
+
             emitters.forEach((e, i) => {
               const warning = e.value > 1000000000 ? ' ⚠️' : '';
               output += `| ${i + 1} | ${e.company_name}${warning} | ${e.value.toLocaleString()} | ${e.year} | ${e.jurisdiction || '—'} | ${e.sics_sector || '—'} |\n`;
             });
-            
+
             const suspicious = emitters.filter(e => e.value > 1000000000);
             if (suspicious.length > 0) {
               output += '\n## ⚠️ Data Quality Warnings\n\n';
               output += 'Values > 1 billion tCO₂e may indicate unit errors (kg reported as tonnes).\n';
             }
-            
+
             // Add gating disclaimer for rankings
             output += '\n---\n';
             output += RANKING_DISCLAIMER;
@@ -781,9 +835,235 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             
             return { content: [{ type: 'text', text: output }] };
           }
-          
+
+          case 'year_comparison': {
+            const companyId = args?.company_id as number;
+            const year1 = args?.year1 as number;
+            const year2 = args?.year2 as number;
+
+            if (!companyId) throw new Error('company_id is required for year_comparison analysis');
+            if (!year1 || !year2) throw new Error('year1 and year2 are required for year_comparison analysis');
+            if (year1 === year2) throw new Error('year1 and year2 must be different');
+
+            const comparison = db.compareYears(companyId, year1, year2);
+
+            if (!comparison) {
+              throw new Error(`Could not compare years - company ${companyId} may not have data for ${year1} or ${year2}`);
+            }
+
+            let output = `# Year-to-Year Emissions Comparison\n\n`;
+            output += `**Company:** ${comparison.company_name} (nz_id: ${comparison.nz_id})\n`;
+            output += `**Comparing:** ${comparison.year1} → ${comparison.year2} (${comparison.yearsApart} year${comparison.yearsApart > 1 ? 's' : ''} apart)\n\n`;
+
+            // Methodology changes warning
+            if (comparison.boundary_changed || comparison.verification_changed) {
+              output += '## ⚠️ Methodology Changes Detected\n\n';
+              if (comparison.boundary_changed) {
+                output += `- **Organizational Boundary Changed:** ${comparison.boundary_year1 || 'Unknown'} → ${comparison.boundary_year2 || 'Unknown'}\n`;
+              }
+              if (comparison.verification_changed) {
+                output += `- **Verification Status Changed:** ${comparison.verification_year1 || 'None'} → ${comparison.verification_year2 || 'None'}\n`;
+              }
+              output += '\n⚠️ **Comparability Note:** Changes in methodology may affect year-to-year comparisons. Consider reviewing data quality before drawing conclusions.\n\n';
+            }
+
+            // Create comparison table
+            output += '## Emissions Comparison\n\n';
+            output += `| Scope | ${comparison.year1} | ${comparison.year2} | Delta (tCO₂e) | Change (%) |`;
+            if (comparison.yearsApart > 1) {
+              output += ` CAGR (%) |`;
+            }
+            output += '\n';
+            output += `|-------|${'-'.repeat(15)}|${'-'.repeat(15)}|${'-'.repeat(15)}|${'-'.repeat(12)}|`;
+            if (comparison.yearsApart > 1) {
+              output += `${'-'.repeat(12)}|`;
+            }
+            output += '\n';
+
+            // Scope 1
+            const scope1Row = [
+              'Scope 1',
+              comparison.scope1_year1 !== null ? comparison.scope1_year1.toLocaleString() : 'N/A',
+              comparison.scope1_year2 !== null ? comparison.scope1_year2.toLocaleString() : 'N/A',
+              comparison.scope1_delta !== null ? comparison.scope1_delta.toLocaleString() : 'N/A',
+              comparison.scope1_percent_change !== null ? comparison.scope1_percent_change.toFixed(1) + '%' : 'N/A'
+            ];
+            if (comparison.yearsApart > 1) {
+              scope1Row.push(comparison.scope1_cagr !== null ? comparison.scope1_cagr.toFixed(1) + '%' : 'N/A');
+            }
+            output += `| ${scope1Row.join(' | ')} |\n`;
+
+            // Scope 2 LB
+            const scope2LBRow = [
+              'Scope 2 (LB)',
+              comparison.scope2_lb_year1 !== null ? comparison.scope2_lb_year1.toLocaleString() : 'N/A',
+              comparison.scope2_lb_year2 !== null ? comparison.scope2_lb_year2.toLocaleString() : 'N/A',
+              comparison.scope2_lb_delta !== null ? comparison.scope2_lb_delta.toLocaleString() : 'N/A',
+              comparison.scope2_lb_percent_change !== null ? comparison.scope2_lb_percent_change.toFixed(1) + '%' : 'N/A'
+            ];
+            if (comparison.yearsApart > 1) {
+              scope2LBRow.push(comparison.scope2_lb_cagr !== null ? comparison.scope2_lb_cagr.toFixed(1) + '%' : 'N/A');
+            }
+            output += `| ${scope2LBRow.join(' | ')} |\n`;
+
+            // Scope 2 MB
+            const scope2MBRow = [
+              'Scope 2 (MB)',
+              comparison.scope2_mb_year1 !== null ? comparison.scope2_mb_year1.toLocaleString() : 'N/A',
+              comparison.scope2_mb_year2 !== null ? comparison.scope2_mb_year2.toLocaleString() : 'N/A',
+              comparison.scope2_mb_delta !== null ? comparison.scope2_mb_delta.toLocaleString() : 'N/A',
+              comparison.scope2_mb_percent_change !== null ? comparison.scope2_mb_percent_change.toFixed(1) + '%' : 'N/A'
+            ];
+            if (comparison.yearsApart > 1) {
+              scope2MBRow.push(comparison.scope2_mb_cagr !== null ? comparison.scope2_mb_cagr.toFixed(1) + '%' : 'N/A');
+            }
+            output += `| ${scope2MBRow.join(' | ')} |\n`;
+
+            // Scope 3
+            const scope3Row = [
+              'Scope 3',
+              comparison.scope3_year1 !== null ? comparison.scope3_year1.toLocaleString() : 'N/A',
+              comparison.scope3_year2 !== null ? comparison.scope3_year2.toLocaleString() : 'N/A',
+              comparison.scope3_delta !== null ? comparison.scope3_delta.toLocaleString() : 'N/A',
+              comparison.scope3_percent_change !== null ? comparison.scope3_percent_change.toFixed(1) + '%' : 'N/A'
+            ];
+            if (comparison.yearsApart > 1) {
+              scope3Row.push(comparison.scope3_cagr !== null ? comparison.scope3_cagr.toFixed(1) + '%' : 'N/A');
+            }
+            output += `| ${scope3Row.join(' | ')} |\n`;
+
+            output += '\n';
+
+            // Interpretation guidance
+            output += '## 📊 Understanding the Results\n\n';
+            output += '- **Delta:** Absolute change in emissions (positive = increase, negative = decrease)\n';
+            output += '- **Change (%):** Percentage change from year 1 to year 2\n';
+            if (comparison.yearsApart > 1) {
+              output += '- **CAGR:** Compound Annual Growth Rate (annualized rate of change)\n';
+            }
+            output += '\n💡 **Next Steps:** Use `nzdpu_quality` to understand methodology and `nzdpu_emissions` to see Scope 3 category breakdowns.\n';
+
+            return { content: [{ type: 'text', text: output }] };
+          }
+
+          case 'peer_trends': {
+            const scope = args?.scope as 'scope1' | 'scope2_lb' | 'scope2_mb' | 'scope3';
+            const jurisdiction = args?.jurisdiction as string | undefined;
+            const sics_sector = args?.sics_sector as string | undefined;
+            const sics_sub_sector = args?.sics_sub_sector as string | undefined;
+            const start_year = args?.start_year as number | undefined;
+            const end_year = args?.end_year as number | undefined;
+
+            if (!scope) throw new Error('scope is required for peer_trends analysis');
+
+            // Build filters
+            const filters = {
+              jurisdiction,
+              sics_sector,
+              sics_sub_sector,
+            };
+
+            // Get peer trends
+            const trends = db.getPeerTrend(scope, filters, start_year, end_year);
+
+            if (trends.dataPoints.length === 0) {
+              let output = '# Peer Group Time-Series Trend\n\n';
+              output += '❌ No data found for the specified filters and time range.\n\n';
+              output += '**Filters Applied:**\n';
+              if (scope) output += `- Scope: ${scope}\n`;
+              if (jurisdiction) output += `- Jurisdiction: ${jurisdiction}\n`;
+              if (sics_sector) output += `- Sector: ${sics_sector}\n`;
+              if (sics_sub_sector) output += `- Sub-sector: ${sics_sub_sector}\n`;
+              output += '\n**Suggestions:**\n';
+              output += '- Try broader filters (e.g., sector instead of sub-sector)\n';
+              output += '- Check if companies in this group have emissions data\n';
+              output += '- Use `nzdpu_search` to find companies matching your criteria\n';
+              return { content: [{ type: 'text', text: output }] };
+            }
+
+            // Build output
+            const scopeNames: Record<string, string> = {
+              scope1: 'Scope 1',
+              scope2_lb: 'Scope 2 (Location-Based)',
+              scope2_mb: 'Scope 2 (Market-Based)',
+              scope3: 'Scope 3 Total',
+            };
+
+            let output = `# Peer Group Time-Series Trend: ${scopeNames[scope]}\n\n`;
+
+            // Show filters
+            const activeFilters = [];
+            if (jurisdiction) activeFilters.push(`Jurisdiction: ${jurisdiction}`);
+            if (sics_sector) activeFilters.push(`Sector: ${sics_sector}`);
+            if (sics_sub_sector) activeFilters.push(`Sub-sector: ${sics_sub_sector}`);
+
+            if (activeFilters.length > 0) {
+              output += `**Peer Group:** ${activeFilters.join(' | ')}\n`;
+            } else {
+              output += `**Peer Group:** All companies (no filters)\n`;
+            }
+
+            output += `**Time Range:** ${trends.yearRange.start} - ${trends.yearRange.end} (${trends.yearRange.totalYears} years)\n`;
+            output += `**Data Points:** ${trends.dataPoints.length} years\n\n`;
+
+            // Overall trend summary
+            output += '## 📈 Overall Trend\n\n';
+            const trendEmoji = {
+              increasing: '📈',
+              decreasing: '📉',
+              stable: '➡️',
+              insufficient_data: '❓',
+            };
+
+            output += `${trendEmoji[trends.overallTrendDirection]} **Direction:** ${trends.overallTrendDirection.replace('_', ' ').toUpperCase()}\n\n`;
+
+            if (trends.meanChange !== null) {
+              output += `- **Mean Change:** ${trends.meanChange > 0 ? '+' : ''}${trends.meanChange.toLocaleString(undefined, { maximumFractionDigits: 0 })} tCO₂e (${trends.meanChangePercent?.toFixed(1)}%)\n`;
+            }
+            if (trends.averageAnnualChange !== null) {
+              output += `- **Average Annual Change:** ${trends.averageAnnualChange > 0 ? '+' : ''}${trends.averageAnnualChange.toLocaleString(undefined, { maximumFractionDigits: 0 })} tCO₂e/year\n`;
+            }
+            if (trends.averageAnnualGrowthRate !== null) {
+              output += `- **CAGR:** ${trends.averageAnnualGrowthRate > 0 ? '+' : ''}${trends.averageAnnualGrowthRate.toFixed(2)}%\n`;
+            }
+
+            output += '\n## 📊 Year-by-Year Statistics\n\n';
+            output += '| Year | Companies | Mean (tCO₂e) | Median (tCO₂e) | Min | Max |\n';
+            output += '|------|-----------|--------------|----------------|-----|-----|\n';
+
+            for (const point of trends.dataPoints) {
+              output += `| ${point.year} | ${point.count} | ${point.mean.toLocaleString(undefined, { maximumFractionDigits: 0 })} | ${point.median.toLocaleString(undefined, { maximumFractionDigits: 0 })} | ${point.min.toLocaleString(undefined, { maximumFractionDigits: 0 })} | ${point.max.toLocaleString(undefined, { maximumFractionDigits: 0 })} |\n`;
+            }
+
+            output += '\n## 📉 Interpretation\n\n';
+
+            if (trends.overallTrendDirection === 'increasing') {
+              output += '⚠️ **Emissions are increasing** across this peer group over time. This could indicate:\n';
+              output += '- Business growth without proportional efficiency improvements\n';
+              output += '- Expanding operational scope\n';
+              output += '- Need for enhanced decarbonization efforts\n';
+            } else if (trends.overallTrendDirection === 'decreasing') {
+              output += '✅ **Emissions are decreasing** across this peer group over time. This could indicate:\n';
+              output += '- Successful decarbonization initiatives\n';
+              output += '- Improved energy efficiency\n';
+              output += '- Business model changes or reduced operations\n';
+            } else if (trends.overallTrendDirection === 'stable') {
+              output += '➡️ **Emissions are stable** across this peer group over time. This could indicate:\n';
+              output += '- Balance between growth and efficiency improvements\n';
+              output += '- Mature industries with consistent operations\n';
+              output += '- Limited decarbonization progress\n';
+            }
+
+            output += '\n💡 **Next Steps:**\n';
+            output += '- Use `nzdpu_benchmark` with `mode: compare` to see individual company performance\n';
+            output += '- Check specific companies with `nzdpu_emissions` for detailed breakdowns\n';
+            output += '- Review methodologies with `nzdpu_quality` to ensure data comparability\n';
+
+            return { content: [{ type: 'text', text: output }] };
+          }
+
           default:
-            throw new Error(`Unknown analysis: ${analysis}. Use: overview, top_emitters, disclosure, or data_issues`);
+            throw new Error(`Unknown analysis: ${analysis}. Use: overview, top_emitters, disclosure, data_issues, year_comparison, or peer_trends`);
         }
       }
 
@@ -801,7 +1081,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             if (!companyId) throw new Error('company_id is required for single mode');
             
             const result = db.benchmarkCompany(companyId, scope, year);
-            if (!result) throw new Error(`Company with nz_id ${companyId} not found`);
+            // FIX-L4: Enhanced error message
+            if (!result) throw new Error(`Company with nz_id ${companyId} not found or has no emissions data. Use nzdpu_search to find companies.`);
             
             const scopeNames: Record<string, string> = {
               scope1: 'Scope 1',
@@ -810,8 +1091,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               scope3: 'Scope 3 Total',
             };
             
-            let output = `# Benchmark: ${result.company.company_name}\n\n`;
-            output += `**Scope:** ${scopeNames[scope]}\n`;
+            // FIX-L2: Add scope to title for clarity
+            let output = `# Benchmark: ${result.company.company_name} (${scopeNames[scope]})\n\n`;
+            output += `**Benchmarking Scope:** ${scopeNames[scope]}\n`;
             output += `**Year:** ${result.companyYear}\n`;
             output += `**Company Value:** ${result.companyValue?.toLocaleString() || 'N/A'} tCO₂e\n\n`;
             
@@ -837,8 +1119,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               output += `- Mean: ${Math.round(result.combinedStats.mean).toLocaleString()} tCO₂e\n`;
               output += `- Median: ${Math.round(result.combinedStats.median).toLocaleString()} tCO₂e\n`;
               output += `- **Company Percentile: ${result.percentileInCombined}%**\n`;
+            } else if (result.combinedStats && result.combinedStats.count < 3) {
+              // FIX-L1: Add warning when intersection benchmark not shown
+              output += `\n⚠️ **Intersection Benchmark Not Available**\n`;
+              output += `Only ${result.combinedStats.count} peer(s) found in ${result.company.jurisdiction} + ${result.company.sics_sector}. `;
+              output += `Minimum 3 peers required for statistical significance.\n`;
             }
-            
+
             // Add gating disclaimer for benchmarks
             output += '\n---\n';
             output += BENCHMARK_DISCLAIMER;
@@ -1048,8 +1335,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         
         const result = db.getCompanyQualityAssessment(companyId, year);
         
+        // FIX-L4: Enhanced error message
         if (!result.companyInfo) {
-          throw new Error(`Company with nz_id ${companyId} not found`);
+          throw new Error(`Company with nz_id ${companyId} not found. Use nzdpu_search to find companies and get their nz_id.`);
         }
         
         let output = `# Data Quality Assessment: ${result.companyInfo.company_name}\n\n`;
@@ -1087,16 +1375,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
         }
         
+        // FIX-M3: More prominent methodology change warnings
         if (result.methodologyChanges.length > 0) {
-          output += `\n### ⚠️ Methodology Changes Over Time\n\n`;
-          output += '*Changes affect year-over-year comparability:*\n\n';
+          output += `\n## ⚠️ METHODOLOGY CHANGES DETECTED\n\n`;
+          output += `**${result.methodologyChanges.length} year(s) with methodology changes found.**\n\n`;
+          output += `⚠️ **Impact on Comparability:** Year-over-year comparisons may not be valid when methodologies change. `;
+          output += `Changes in organizational boundary, calculation methods, or verification status can significantly affect reported emissions.\n\n`;
+
           for (const mc of result.methodologyChanges) {
-            output += `**${mc.year}:**\n`;
+            output += `### Changes in ${mc.year}\n\n`;
             for (const c of mc.changes) {
-              output += `- ${c.scope}: "${c.previousMethod || 'None'}" → "${c.currentMethod || 'None'}"\n`;
+              output += `- **${c.scope}:** \`${c.previousMethod || 'None'}\` → \`${c.currentMethod || 'None'}\`\n`;
             }
             output += '\n';
           }
+
+          output += `💡 **Recommendation:** When comparing years with methodology changes, consider:\n`;
+          output += `- Recalculating previous years with the new methodology\n`;
+          output += `- Focusing on years with consistent methodologies\n`;
+          output += `- Consulting the company's disclosure notes for recalculation policies\n\n`;
         }
         
         if (a.warnings.length > 0) {

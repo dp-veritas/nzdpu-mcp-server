@@ -1,0 +1,21 @@
+{
+  "name": "nzdpu_list",
+  "description": "List available classification values in the database. Use to explore what sectors, jurisdictions, or industries exist before searching.",
+  "arguments": {
+    "type": "object",
+    "properties": {
+      "type": {
+        "type": "string",
+        "enum": ["sectors", "jurisdictions", "subsectors"],
+        "description": "What to list: sectors (SICS sectors with counts), jurisdictions (countries with counts), or subsectors (full SICS hierarchy)"
+      },
+      "sector": {
+        "type": "string",
+        "description": "For subsectors: filter to a specific sector"
+      }
+    },
+    "required": ["type"],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

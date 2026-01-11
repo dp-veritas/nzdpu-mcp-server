@@ -1,0 +1,53 @@
+{
+  "name": "nzdpu_benchmark",
+  "description": "Compare and benchmark companies against peers. Includes data quality assessment and comparability warnings. CRITICAL: For Scope 2, always specify scope2_lb OR scope2_mb - never mix them. Scope 3 totals often cannot be compared due to different category coverage.",
+  "arguments": {
+    "type": "object",
+    "properties": {
+      "mode": {
+        "type": "string",
+        "enum": ["single", "compare", "peer_stats"],
+        "description": "Mode: single (one company vs peers), compare (side-by-side multiple companies), peer_stats (aggregate statistics)"
+      },
+      "company_id": {
+        "type": "number",
+        "description": "For single mode: the company nz_id to benchmark"
+      },
+      "company_ids": {
+        "type": "array",
+        "items": { "type": "number" },
+        "description": "For compare mode: list of nz_ids to compare"
+      },
+      "jurisdiction": {
+        "type": "string",
+        "description": "Filter by jurisdiction"
+      },
+      "sector": {
+        "type": "string",
+        "description": "Filter by SICS sector"
+      },
+      "sub_sector": {
+        "type": "string",
+        "description": "Filter by SICS sub-sector"
+      },
+      "scope": {
+        "type": "string",
+        "enum": ["scope1", "scope2_lb", "scope2_mb", "scope3"],
+        "description": "Which scope to benchmark (default: scope1)",
+        "default": "scope1"
+      },
+      "year": {
+        "type": "number",
+        "description": "Specific reporting year (optional)"
+      },
+      "limit": {
+        "type": "number",
+        "description": "For compare: max companies (default: 20)",
+        "default": 20
+      }
+    },
+    "required": ["mode"],
+    "additionalProperties": false,
+    "$schema": "http://json-schema.org/draft-07/schema#"
+  }
+}

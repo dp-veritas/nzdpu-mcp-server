@@ -109,17 +109,26 @@ This project has MCP access to the NZDPU emissions database, enabling comprehens
 
 ### 4. `nzdpu_analyze` - Dataset Analytics
 
-**USE THIS** for full-dataset analysis, rankings, disclosure patterns, or data quality audits.
+**USE THIS** for full-dataset analysis, rankings, disclosure patterns, data quality audits, year-over-year comparisons, or peer group trend analysis.
 
 | Parameter | Description |
 |-----------|-------------|
-| `analysis` | **Required**: "overview", "top_emitters", "disclosure", or "data_issues" |
-| `scope` | For top_emitters: scope1, scope2_lb, scope2_mb, scope3, scope3_cat_1 through scope3_cat_15 |
+| `analysis` | **Required**: "overview", "top_emitters", "disclosure", "data_issues", "year_comparison", or "peer_trends" |
+| `scope` | For top_emitters/peer_trends: scope1, scope2_lb, scope2_mb, scope3, scope3_cat_1 through scope3_cat_15 |
 | `year` | Filter to specific year |
+| `jurisdiction` | For top_emitters: filter by jurisdiction |
+| `sics_sector` | For top_emitters/peer_trends: filter by SICS sector |
+| `sics_sub_sector` | For top_emitters/peer_trends: filter by SICS sub-sector |
+| `sics_industry` | For top_emitters: filter by SICS industry |
 | `min_disclosures` | For disclosure: minimum years of history |
 | `limit` | Max results (default: 20) |
+| `company_id` | For year_comparison: company nz_id to compare |
+| `year1` | For year_comparison: first year |
+| `year2` | For year_comparison: second year |
+| `start_year` | For peer_trends: start year (optional) |
+| `end_year` | For peer_trends: end year (optional) |
 
-**Returns**: Dataset statistics, rankings, disclosure patterns, or quality issues.
+**Returns**: Dataset statistics, rankings, disclosure patterns, quality issues, year-over-year comparisons with CAGR, or peer group trends over time.
 
 ### 5. `nzdpu_benchmark` - Compare & Benchmark
 
